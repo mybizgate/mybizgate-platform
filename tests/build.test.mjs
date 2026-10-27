@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { rewriteReferences, replaceBuildVersion, injectNoindex, rewriteCanonical } from '../build/lib/rewrite.mjs';
+import { rewriteReferences, replaceBuildVersion, injectBuildVersionMeta, buildVersionMetaTag, injectNoindex, rewriteCanonical } from '../build/lib/rewrite.mjs';
 import { shouldConvert, collectProtectedImages, webpTarget } from '../build/lib/images.mjs';
 import { matchesPattern, isExcluded } from '../build/lib/fsutil.mjs';
 import { validateDist } from '../build/lib/validate.mjs';
@@ -31,6 +31,44 @@ test('cache busting replaces every token', () => {
   assert.equal(r.count, 2);
   assert.equal(r.text, 'a abc12345 b abc12345');
   assert.equal(replaceBuildVersion('none', 'x').count, 0);
+});
+
+test('build-version meta is inserted into <head> when the source has none', () => {
+  const html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>x</title>\n</head>\n<body></body>\n</html>';
+  const r = injectBuildVersionMeta(html, 'bc2ccee2');
+  assert.equal(r.action, 'inserted');
+  assert.equal(r.text.match(/<meta name="build-version"/g).length, 1);
+  assert.match(r.text, /<head>\n  <meta charset="UTF-8">\n<meta name="build-version" content="bc2ccee2">\n  <title>x<\/title>/, 'placed inside <head>, after the charset meta');
+  const noCharset = injectBuildVersionMeta('<html><head><title>x</title></head><body></body></html>', 'v1');
+  assert.equal(noCharset.text, '<html><head>\n<meta name="build-version" content="v1"><title>x</title></head><body></body></html>');
+  assert.equal(injectBuildVersionMeta('<html><body>no head</body></html>', 'v1').text, '<html>\n<head><meta name="build-version" content="v1"></head><body>no head</body></html>');
+  assert.match(injectBuildVersionMeta('<p>fragment</p>', 'v1').text, /^<meta name="build-version" content="v1">\n<p>fragment<\/p>$/);
+  assert.equal(buildVersionMetaTag('a"b&c'), '<meta name="build-version" content="a&quot;b&amp;c">');
+});
+
+test('build-version meta is updated in place, never duplicated', () => {
+  const authored = '<head><meta charset="UTF-8"><meta name="build-version" content="__BUILD_VERSION__"><title>x</title></head>';
+  const r = injectBuildVersionMeta(replaceBuildVersion(authored, 'v2').text, 'v2');
+  assert.equal(r.action, 'updated');
+  assert.equal(r.text, '<head><meta charset="UTF-8"><meta name="build-version" content="v2"><title>x</title></head>');
+  // stale value, reversed attribute order, single quotes, self-closing
+  for (const tag of ['<meta name="build-version" content="old123">', "<meta content='old' name='build-version'>", '<meta content="old" name="build-version" />', '<meta name=build-version content=old>']) {
+    const out = injectBuildVersionMeta(`<head>${tag}<title>x</title></head>`, 'new1');
+    assert.equal(out.action, 'updated', tag);
+    assert.equal(out.text, '<head><meta name="build-version" content="new1"><title>x</title></head>', tag);
+  }
+  // unrelated meta tags are untouched and do not count as a build-version tag
+  const other = injectBuildVersionMeta('<head><meta name="build-versions" content="x"><meta name="description" content="build-version"></head>', 'v3');
+  assert.equal(other.action, 'inserted');
+  assert.match(other.text, /<meta name="build-versions" content="x">/);
+  assert.match(other.text, /<meta name="description" content="build-version">/);
+  // duplicates collapse to a single tag at the first position
+  const dup = injectBuildVersionMeta('<head><meta name="build-version" content="a"><title>x</title><meta name="build-version" content="b"></head>', 'v4');
+  assert.equal(dup.action, 'deduplicated');
+  assert.equal(dup.removed, 1);
+  assert.equal(dup.text, '<head><meta name="build-version" content="v4"><title>x</title></head>');
+  // idempotent
+  assert.equal(injectBuildVersionMeta(dup.text, 'v4').text, dup.text);
 });
 
 test('staging noindex and canonical rewriting', () => {
@@ -114,8 +152,11 @@ test('full build of a fixture site produces optimised dist with WebP, rewritten 
   const html = fs.readFileSync(path.join(dist, 'index.html'), 'utf8');
   assert.match(html, /images\/photo\.webp/);
   assert.match(html, /assets\/graphic\.webp/);
-  assert.match(html, /content="v1234567"/);
+  assert.equal(html.match(/<meta name="build-version"/g).length, 1, 'authored build-version tag kept once');
+  assert.match(html, /<meta name="build-version" content="v1234567">/);
   assert.match(html, /style\.css\?v=v1234567/);
+  assert.equal(report.versionMeta.updated, 1);
+  assert.equal(report.versionMeta.inserted, 0);
   assert.doesNotMatch(html, /__BUILD_VERSION__/);
   assert.doesNotMatch(html, /<!-- comment -->/);
   assert.match(html, /<a href="https:\/\/wa\.me\/60123456789">/);
@@ -137,10 +178,55 @@ test('full build of a fixture site produces optimised dist with WebP, rewritten 
   const staging = await buildSite({ site, out: path.join(site, 'dist-staging'), version: 'v1', staging: true, productionUrl: 'https://stg-fixture.mybizgate.com', quiet: true });
   const sh = fs.readFileSync(path.join(site, 'dist-staging', 'index.html'), 'utf8');
   assert.match(sh, /noindex,nofollow/);
+  assert.match(sh, /<meta name="build-version" content="v1">/);
   assert.match(sh, /canonical" href="https:\/\/stg-fixture\.mybizgate\.com\/"/);
   assert.match(fs.readFileSync(path.join(site, 'dist-staging', 'robots.txt'), 'utf8'), /Disallow: \//);
   assert.ok(staging.validation.ok);
   fs.rmSync(site, { recursive: true, force: true });
+});
+
+test('full build injects build-version meta into every HTML page when the source has none', { skip: !hasEngine && 'build engine dependencies not installed' }, async () => {
+  const { buildSite } = await import('../build/build-static-site.mjs');
+  const site = fs.mkdtempSync(path.join(os.tmpdir(), 'mbg-meta-'));
+  fs.mkdirSync(path.join(site, 'about'));
+  // Mirrors mybizgate-site: cache-busting tokens present, no build-version meta authored.
+  fs.writeFileSync(path.join(site, 'index.html'), `<!DOCTYPE html>\n<html lang="en-MY">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>MyBizGate</title>\n  <link rel="stylesheet" href="style.css?v=__BUILD_VERSION__">\n</head>\n<body>\n  <h1>MyBizGate</h1>\n  <img src="pic.svg" alt="">\n  <script src="script.js?v=__BUILD_VERSION__" defer></script>\n</body>\n</html>\n`);
+  fs.writeFileSync(path.join(site, 'about', 'index.html'), '<!DOCTYPE html><html><head><meta name="build-version" content="stale"><title>About</title></head><body><a href="../">home</a></body></html>\n');
+  fs.writeFileSync(path.join(site, 'style.css'), 'body { color: #fff; }\n');
+  fs.writeFileSync(path.join(site, 'script.js'), 'console.log("hi");\n');
+  fs.writeFileSync(path.join(site, 'pic.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  const report = await buildSite({ site, out: path.join(site, 'dist'), version: 'bc2ccee2', quiet: true });
+  const index = fs.readFileSync(path.join(site, 'dist', 'index.html'), 'utf8');
+  const about = fs.readFileSync(path.join(site, 'dist', 'about', 'index.html'), 'utf8');
+  for (const [name, html] of [['index', index], ['about', about]]) {
+    assert.equal((html.match(/<meta name="build-version"/g) || []).length, 1, `${name}: exactly one build-version meta`);
+    assert.match(html, /<head>[^]*?<meta name="build-version" content="bc2ccee2">[^]*?<\/head>/, `${name}: inside <head> with the build version`);
+  }
+  assert.doesNotMatch(about, /stale/);
+  assert.match(index, /style\.css\?v=bc2ccee2/);
+  assert.ok(!index.includes('\n  '), 'html still minified');
+  assert.deepEqual(report.versionMeta, { inserted: 1, updated: 1, deduplicated: 0 });
+  // verify.mjs must be able to read the version back the way the deployment health check does
+  const { extractCriticalAssets } = await import('../src/verify.mjs');
+  assert.equal(extractCriticalAssets(index).version, 'bc2ccee2');
+  assert.equal(extractCriticalAssets(about).version, 'bc2ccee2');
+  // source untouched
+  assert.doesNotMatch(fs.readFileSync(path.join(site, 'index.html'), 'utf8'), /build-version/);
+  assert.ok(report.validation.ok, report.validation.errors.join(';'));
+  assert.ok(!report.validation.warnings.some((w) => /build-version/.test(w)));
+  fs.rmSync(site, { recursive: true, force: true });
+});
+
+test('dist validation warns when an HTML document has no build-version meta', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbg-validate-meta-'));
+  fs.writeFileSync(path.join(dir, 'index.html'), '<html><head><title>x</title></head><body></body></html>');
+  let r = validateDist(dir);
+  assert.ok(r.ok);
+  assert.ok(r.warnings.some((w) => /build-version/.test(w)));
+  fs.writeFileSync(path.join(dir, 'index.html'), '<html><head><meta name="build-version" content="v1"><title>x</title></head><body></body></html>');
+  r = validateDist(dir);
+  assert.ok(!r.warnings.some((w) => /build-version/.test(w)));
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('build fails on broken JavaScript', { skip: !hasEngine && 'build engine dependencies not installed' }, async () => {

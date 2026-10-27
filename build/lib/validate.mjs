@@ -61,6 +61,7 @@ export function validateDist(root) {
       if (!/<html[\s>]/i.test(text) || !/<\/html>/i.test(text)) errors.push(`${rel}: not a complete HTML document (missing <html> or </html>)`);
       if (!/<title[\s>]/i.test(text)) warnings.push(`${rel}: missing <title>`);
       if (!/<body[\s>]/i.test(text)) warnings.push(`${rel}: missing <body>`);
+      if (!/<meta\b[^>]*\bname\s*=\s*["']?build-version["'\s>]/i.test(text)) warnings.push(`${rel}: missing <meta name="build-version"> (deployment verification will fail)`);
       const ids = new Set([...text.matchAll(/\sid\s*=\s*["']([^"']+)["']/g)].map((m) => m[1]));
       for (const m of text.matchAll(/href\s*=\s*["']#([^"']+)["']/g)) {
         if (!ids.has(m[1])) warnings.push(`${rel}: internal link #${m[1]} has no matching id`);

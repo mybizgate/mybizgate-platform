@@ -34,7 +34,7 @@ build:
     max_width: 1920
     png: lossy             # lossy | lossless
     preserve: []           # e.g. ["assets/print/*.png"]
-  cache_bust: true         # replaces __BUILD_VERSION__ in dist/ only
+  cache_bust: true         # replaces __BUILD_VERSION__ in dist/ only (the build-version <meta> is always added to dist HTML)
 
 qa:
   lighthouse: false        # warning-mode Lighthouse in CI

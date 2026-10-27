@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import * as yaml from 'js-yaml';
 import sharp from 'sharp';
 import { DEFAULT_EXCLUDES, walk, readText, writeText, ensureDir, fileSize, fmt } from './lib/fsutil.mjs';
-import { rewriteReferences, replaceBuildVersion, injectNoindex, rewriteCanonical, stagingRobotsTxt } from './lib/rewrite.mjs';
+import { rewriteReferences, replaceBuildVersion, injectBuildVersionMeta, injectNoindex, rewriteCanonical, stagingRobotsTxt } from './lib/rewrite.mjs';
 import { collectProtectedImages, shouldConvert, webpTarget, convertToWebp } from './lib/images.mjs';
 import { minifyHtml, minifyCss, minifyJs, MinifyError } from './lib/minify.mjs';
 import { validateDist } from './lib/validate.mjs';
@@ -76,7 +76,7 @@ export async function buildSite(opts) {
 
   const exclude = [...DEFAULT_EXCLUDES, ...build.exclude, path.relative(siteDir, outDir).split(path.sep).join('/') || 'dist'];
   const files = walk(siteDir, { exclude });
-  const report = { site: siteDir, out: outDir, version, mode: staging ? 'staging' : 'production', files: files.length, sourceBytes: 0, distBytes: 0, images: [], html: [], css: [], js: [], copied: 0, versionReplacements: 0, referenceRewrites: 0, warnings: [] };
+  const report = { site: siteDir, out: outDir, version, mode: staging ? 'staging' : 'production', files: files.length, sourceBytes: 0, distBytes: 0, images: [], html: [], css: [], js: [], copied: 0, versionReplacements: 0, versionMeta: { inserted: 0, updated: 0, deduplicated: 0 }, referenceRewrites: 0, warnings: [] };
   for (const rel of files) report.sourceBytes += fileSize(path.join(siteDir, rel));
 
   // --- Images --------------------------------------------------------------
@@ -118,6 +118,8 @@ export async function buildSite(opts) {
       if (staging) html = injectNoindex(html);
       if (staging && productionUrl) html = rewriteCanonical(html, productionUrl); // production canonicals are left as authored
       if (build.cache_bust !== false) { const v = replaceBuildVersion(html, version); html = v.text; report.versionReplacements += v.count; }
+      // Every dist HTML document carries the build version so deployment verification can confirm what is live.
+      const meta = injectBuildVersionMeta(html, version); html = meta.text; report.versionMeta[meta.action] += 1;
       const out = await minifyHtml(html, { filename: rel });
       writeText(dest, out);
       report.html.push({ file: rel, before, after: Buffer.byteLength(out) });
@@ -163,6 +165,7 @@ export async function buildSite(opts) {
   say(`[ OK ] JS    ${fmt(sum(report.js, 'before'))} -> ${fmt(sum(report.js, 'after'))} (${report.js.length} files)`);
   say(`[ OK ] WebP  ${fmt(sum(report.images, 'before'))} -> ${fmt(sum(report.images, 'after'))} (${report.images.length} images converted, ${report.referenceRewrites} references rewritten)`);
   say(`[ OK ] Cache busting: ${report.versionReplacements} replacement(s) of __BUILD_VERSION__ -> ${version}`);
+  say(`[ OK ] Build version meta: ${report.versionMeta.inserted} inserted, ${report.versionMeta.updated} updated, ${report.versionMeta.deduplicated} deduplicated`);
   say(`[ OK ] Total ${fmt(report.sourceBytes)} -> ${fmt(report.distBytes)} (${report.files} source files, ${validation.files} output files)`);
   for (const w of report.warnings) say(`[WARN] ${w}`);
   for (const w of validation.warnings) say(`[WARN] ${w}`);

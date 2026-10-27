@@ -40,6 +40,42 @@ export function replaceBuildVersion(text, version) {
   return { text: parts.join(version), count: parts.length - 1 };
 }
 
+export const BUILD_VERSION_META_NAME = 'build-version';
+
+const escapeAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+export function buildVersionMetaTag(version) {
+  return `<meta name="${BUILD_VERSION_META_NAME}" content="${escapeAttr(version)}">`;
+}
+
+/**
+ * Ensure a dist HTML document carries exactly one `<meta name="build-version" content="<version>">`.
+ * Existing tags (any attribute order / quoting) are replaced in place; duplicates are removed.
+ * When absent, the tag is inserted inside <head>, directly after a leading <meta charset> when present.
+ * Source files are never expected to contain the tag; this runs on dist output only.
+ */
+export function injectBuildVersionMeta(html, version) {
+  const tag = buildVersionMetaTag(version);
+  const existing = /<meta\b[^>]*\bname\s*=\s*(?:"build-version"|'build-version'|build-version(?=[\s/>]))[^>]*>/gi;
+  let count = 0;
+  const replaced = html.replace(existing, () => { count += 1; return count === 1 ? tag : ''; });
+  if (count > 0) return { text: replaced, action: count > 1 ? 'deduplicated' : 'updated', removed: count - 1 };
+
+  const head = /<head\b[^>]*>/i.exec(html);
+  if (head) {
+    let at = head.index + head[0].length;
+    const charset = /^\s*<meta\b[^>]*\bcharset\b[^>]*>/i.exec(html.slice(at));
+    if (charset) at += charset[0].length;
+    return { text: `${html.slice(0, at)}\n${tag}${html.slice(at)}`, action: 'inserted', removed: 0 };
+  }
+  const htmlOpen = /<html\b[^>]*>/i.exec(html);
+  if (htmlOpen) {
+    const at = htmlOpen.index + htmlOpen[0].length;
+    return { text: `${html.slice(0, at)}\n<head>${tag}</head>${html.slice(at)}`, action: 'inserted', removed: 0 };
+  }
+  return { text: `${tag}\n${html}`, action: 'inserted', removed: 0 };
+}
+
 export function injectNoindex(html) {
   let out = html.replace(/<meta\s+name=["']robots["'][^>]*>\s*/gi, '');
   const tag = '<meta name="robots" content="noindex,nofollow">';

@@ -41,6 +41,9 @@ Anything else (root, `..`, empty, other folders) is refused before FTP runs.
 4. Minify HTML (html-minifier-next, conservative whitespace, comments removed, inline CSS/JS minified, JSON-LD compacted, attributes untouched),
    CSS (Lightning CSS) and JS (Terser compress + mangle). Any minifier error fails the build.
 5. Replace `__BUILD_VERSION__` with the short Git SHA in dist only.
+   Every dist HTML document then gets exactly one `<meta name="build-version" content="<sha>">` inside `<head>`:
+   inserted when the source has none, updated in place when it does, duplicates removed. Source files never need the tag;
+   the post-deploy health check reads it to confirm which build is live.
 6. Staging builds inject `<meta name="robots" content="noindex,nofollow">`, a `Disallow: /` robots.txt and staging canonical URLs. Production builds leave canonical/og:url exactly as authored.
 7. Validate dist: `index.html` exists, every local reference resolves, documents are complete HTML, internal anchors exist.
 
