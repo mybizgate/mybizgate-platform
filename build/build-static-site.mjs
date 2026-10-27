@@ -116,7 +116,7 @@ export async function buildSite(opts) {
       let html = readText(src);
       const rw = rewriteReferences(html, rel, conversions); html = rw.text; report.referenceRewrites += rw.count;
       if (staging) html = injectNoindex(html);
-      if (productionUrl) html = rewriteCanonical(html, productionUrl);
+      if (staging && productionUrl) html = rewriteCanonical(html, productionUrl); // production canonicals are left as authored
       if (build.cache_bust !== false) { const v = replaceBuildVersion(html, version); html = v.text; report.versionReplacements += v.count; }
       const out = await minifyHtml(html, { filename: rel });
       writeText(dest, out);

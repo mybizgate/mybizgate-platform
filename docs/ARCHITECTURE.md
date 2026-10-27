@@ -41,7 +41,7 @@ Anything else (root, `..`, empty, other folders) is refused before FTP runs.
 4. Minify HTML (html-minifier-next, conservative whitespace, comments removed, inline CSS/JS minified, JSON-LD compacted, attributes untouched),
    CSS (Lightning CSS) and JS (Terser compress + mangle). Any minifier error fails the build.
 5. Replace `__BUILD_VERSION__` with the short Git SHA in dist only.
-6. Staging builds inject `<meta name="robots" content="noindex,nofollow">`, a `Disallow: /` robots.txt and staging canonical URLs.
+6. Staging builds inject `<meta name="robots" content="noindex,nofollow">`, a `Disallow: /` robots.txt and staging canonical URLs. Production builds leave canonical/og:url exactly as authored.
 7. Validate dist: `index.html` exists, every local reference resolves, documents are complete HTML, internal anchors exist.
 
 ## Deployment
