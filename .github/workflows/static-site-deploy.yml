@@ -1,0 +1,176 @@
+# MyBizGate shared production deployment workflow (reusable, workflow_call).
+#
+# Callers (client/demo/corporate repositories) only need a tiny workflow that
+# invokes this one. Deployment credentials come from the caller's secrets;
+# deploy_dir / site_domain / site_name come from caller variables or from the
+# caller's site.config.yml (variables win when set).
+name: MyBizGate Static Site Deploy
+
+on:
+  workflow_call:
+    inputs:
+      deploy_dir:
+        description: Hosting deployment directory (e.g. public_html/clients/<slug>/). Falls back to site.config.yml.
+        type: string
+        required: false
+        default: ''
+      site_domain:
+        description: Production hostname used for post-deploy verification. Falls back to site.config.yml.
+        type: string
+        required: false
+        default: ''
+      site_name:
+        description: Human-readable site name expected on the homepage (identity check).
+        type: string
+        required: false
+        default: ''
+      environment:
+        description: production or staging (staging builds are noindex).
+        type: string
+        required: false
+        default: production
+      platform_ref:
+        description: Git ref of mybizgate/mybizgate-platform to use for the build engine.
+        type: string
+        required: false
+        default: main
+      verify:
+        description: Run the production health check after deployment.
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      FTP_SERVER:
+        required: true
+      FTP_USERNAME:
+        required: true
+      FTP_PASSWORD:
+        required: true
+
+jobs:
+  build-and-deploy:
+    name: Build, QA and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      PLATFORM_DIR: .mybizgate-platform
+    steps:
+      - name: Checkout site
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Obtain MyBizGate build engine
+        uses: actions/checkout@v4
+        with:
+          repository: mybizgate/mybizgate-platform
+          ref: ${{ inputs.platform_ref }}
+          path: .mybizgate-platform
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            .mybizgate-platform/package-lock.json
+            .mybizgate-platform/build/package-lock.json
+
+      - name: Install locked platform dependencies
+        run: |
+          npm --prefix "$PLATFORM_DIR" ci --no-audit --no-fund
+          npm --prefix "$PLATFORM_DIR/build" ci --no-audit --no-fund
+
+      - name: Resolve and validate deployment target
+        id: target
+        env:
+          INPUT_DEPLOY_DIR: ${{ inputs.deploy_dir }}
+          INPUT_SITE_DOMAIN: ${{ inputs.site_domain }}
+          INPUT_SITE_NAME: ${{ inputs.site_name }}
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        run: node "$PLATFORM_DIR/src/cli.mjs" resolve-target . --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT"
+
+      - name: Build production artifacts into dist/
+        env:
+          BUILD_VERSION: ${{ github.sha }}
+        run: |
+          VERSION="${BUILD_VERSION::8}"
+          EXTRA=""
+          if [ "${{ steps.target.outputs.environment }}" = "staging" ]; then EXTRA="--staging"; fi
+          node "$PLATFORM_DIR/build/build-static-site.mjs" . --out ./dist --version "$VERSION" --report ./.mybizgate-build-report.json $EXTRA
+
+      - name: Validate dist and run QA
+        run: node "$PLATFORM_DIR/src/cli.mjs" qa ./dist
+
+      - name: Optional Lighthouse audit (warning mode)
+        if: steps.target.outputs.qa_lighthouse == 'true'
+        continue-on-error: true
+        run: |
+          npx --yes @lhci/cli@0.14.0 autorun \
+            --collect.staticDistDir=./dist \
+            --collect.numberOfRuns=1 \
+            --assert.assertions.categories:performance=warn:minScore=0.8 \
+            --assert.assertions.categories:accessibility=warn:minScore=0.9 \
+            --assert.assertions.categories:best-practices=warn:minScore=0.9 \
+            --assert.assertions.categories:seo=warn:minScore=0.9 \
+            --upload.target=filesystem --upload.outputDir=./.lighthouse
+
+      - name: Optional browser smoke tests and screenshots
+        if: steps.target.outputs.qa_browser_smoke == 'true' || steps.target.outputs.qa_screenshots == 'true'
+        continue-on-error: true
+        env:
+          SMOKE_DIST: ${{ github.workspace }}/dist
+          SMOKE_SCREENSHOT_DIR: ${{ github.workspace }}/.screenshots
+          SMOKE_SITE_NAME: ${{ steps.target.outputs.site_name }}
+        run: |
+          cd "$PLATFORM_DIR/tests/smoke"
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+      - name: Upload QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-${{ github.run_number }}
+          if-no-files-found: ignore
+          path: |
+            .mybizgate-build-report.json
+            .lighthouse
+            .screenshots
+
+      - name: Deploy dist/ via FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./dist/
+          server-dir: ${{ steps.target.outputs.server_dir }}
+          dangerous-clean-slate: false
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+
+      - name: Verify deployment
+        if: inputs.verify
+        env:
+          BUILD_VERSION: ${{ github.sha }}
+        run: node "$PLATFORM_DIR/src/cli.mjs" verify --url "https://${{ steps.target.outputs.verify_domain }}" --identity "${{ steps.target.outputs.site_name }}" --expect-version "${BUILD_VERSION::8}" --wait 300
+
+      - name: Tag release
+        if: success() && steps.target.outputs.environment == 'production'
+        env:
+          BUILD_VERSION: ${{ github.sha }}
+        run: |
+          TAG="prod-$(date -u +%Y%m%d-%H%M)-${BUILD_VERSION::8}"
+          git config user.name "mybizgate-deploy[bot]"
+          git config user.email "deploy@mybizgate.com"
+          git tag -a "$TAG" -m "Production deployment $TAG" "$BUILD_VERSION"
+          git push origin "refs/tags/$TAG"
+          echo "Tagged $TAG"

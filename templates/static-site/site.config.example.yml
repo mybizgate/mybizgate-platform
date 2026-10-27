@@ -1,0 +1,46 @@
+# MyBizGate site configuration (copy to site.config.yml).
+# The slug is the permanent identity: repository, local folder and hosting directory
+# are derived from it and never change when the domain changes.
+client:
+  name: Paw Haven Cat Hotel
+  slug: pawhaven
+
+template:
+  type: petgate            # blank | petgate | autogate | beautygate | dentalgate | supplygate
+
+domain:
+  type: subdomain          # subdomain | custom
+  primary: pawhaven.mybizgate.com
+  # For custom domains:
+  # type: custom
+  # primary: pawhaven.com.my
+  # staging: stg-pawhaven.mybizgate.com
+  # dns_mode: external     # awedns | external
+
+hosting:
+  deploy_dir: public_html/clients/pawhaven/   # clients: public_html/clients/<slug>/ only
+  ftp_account: dedicated   # dedicated (restricted FTP user) | shared
+
+site:
+  kind: client             # client | demo | corporate
+  production_url: https://pawhaven.mybizgate.com
+  identity: Paw Haven Cat Hotel   # text expected on the homepage during health checks
+
+build:
+  exclude: []              # extra paths to leave out of dist/
+  images:
+    convert: true
+    quality: 82
+    max_width: 1920
+    png: lossy             # lossy | lossless
+    preserve: []           # e.g. ["assets/print/*.png"]
+  cache_bust: true         # replaces __BUILD_VERSION__ in dist/ only
+
+qa:
+  lighthouse: false        # warning-mode Lighthouse in CI
+  browser_smoke: false     # Playwright smoke tests in CI
+  screenshots: false       # desktop-home.png / mobile-home.png artifacts
+
+github:
+  repo: client-pawhaven
+  visibility: private

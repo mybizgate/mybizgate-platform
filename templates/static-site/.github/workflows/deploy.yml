@@ -1,0 +1,28 @@
+# Minimal caller workflow. All build/QA/deploy logic lives in the shared
+# MyBizGate platform workflow; keep this file small and config-driven.
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - deploy
+  workflow_dispatch:
+
+concurrency:
+  group: production-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    uses: mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@main
+    with:
+      deploy_dir: ${{ vars.DEPLOY_DIR }}
+      site_domain: ${{ vars.SITE_DOMAIN }}
+      site_name: ${{ vars.SITE_NAME }}
+    secrets:
+      FTP_SERVER: ${{ secrets.FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
