@@ -6,7 +6,7 @@ export const DEFAULT_EXCLUDES = [
   '.git', '.github', '.gitignore', '.gitattributes', '.editorconfig', '.mybizgate', '.vscode', '.idea',
   'node_modules', 'dist', 'docs', 'tests', 'test', 'screenshots', 'build-report.json',
   'README.md', 'README.txt', 'readme.md', 'AGENTS.md', 'CLAUDE.md', 'LICENSE', 'CHANGELOG.md',
-  'site.config.yml', 'site.config.example.yml', 'package.json', 'package-lock.json',
+  'site.config.yml', 'site.config.example.yml', '.mybizgate.local.yml', 'template.yml', 'package.json', 'package-lock.json',
   '.env', '.env.*', '*.log', '.ftp-deploy-sync-state.json', '.DS_Store', 'Thumbs.db', '*.psd', '*.xcf', '*.sketch', '*.fig',
   '.htpasswd', '*.pem', '*.key', 'id_rsa*', '*.bak', '*.orig', '*.swp', '*~',
 ];

@@ -5,6 +5,7 @@
 ```
 /home/jul/Workspace/mybizgate/        workspace (NOT a Git repository)
 ├── platform/                          this repository: tooling only, no secrets
+├── templates/<business-type>/<tpl>/   template library (reusable website products; discovered at runtime)
 ├── clients/client-<slug>/             one Git repository per real client
 ├── mybizgate-site/                    corporate website  -> public_html/
 └── petgate|autogate|...               demo/products      -> public_html/site-<slug>/
@@ -17,7 +18,10 @@ Changing the domain later never changes any of those.
 
 ## Configuration
 
-Every site repository has a `site.config.yml` (see `templates/static-site/site.config.example.yml`).
+Every site repository has a `site.config.yml` (see `templates/static-site/site.config.example.yml`). It records the
+template identity (`template.id` = `<business-type>/<template>`, `template.version` from `template.yml`) and the
+`business` contact details collected by the wizard. Local-only input such as the client photos folder is written to
+`.mybizgate.local.yml` (gitignored, excluded from builds), never to the committed config.
 `src/config.mjs` validates it; the deployment-directory rules are enforced there and again in CI:
 
 | site.kind | allowed deploy_dir | repository |
@@ -27,6 +31,20 @@ Every site repository has a `site.config.yml` (see `templates/static-site/site.c
 | client | `public_html/clients/<slug>/` | `client-<slug>` |
 
 Anything else (root, `..`, empty, other folders) is refused before FTP runs.
+
+## Template personalisation (`src/personalize.mjs`)
+
+Templates in `templates/<business-type>/<template>/` carry `{{TOKEN}}` placeholders (`{{BUSINESS_NAME}}`,
+`{{SHORT_NAME}}`, `{{WHATSAPP}}`, `{{EMAIL}}`, `{{PHONE}}`, `{{ADDRESS}}`, `{{OPENING_HOURS}}`, `{{SEO_TITLE}}`,
+`{{SEO_DESCRIPTION}}`, `{{FACEBOOK_URL}}`, ...; `{{KEY|js}}`, `{{KEY|url}}`, `{{KEY|raw}}` filters;
+`{{#KEY}}...{{/KEY}}` conditional blocks). `template.yml` declares `required_content`, `defaults` (may reference
+tokens) and `residue` (source-design strings that must not survive). Provisioning order, both modes:
+
+template selection -> client information -> generate client source -> personalise -> residue validation
+-> local production build -> local QA -> GitHub / cPanel / FTP -> GitHub deployment -> production health check.
+
+Dry run performs the generation and residue scan in a temporary directory; Apply stops with
+`[FAIL] Template personalisation incomplete` (file:line matches) before any remote resource exists.
 
 ## Build engine (`build/`)
 
@@ -50,7 +68,10 @@ Anything else (root, `..`, empty, other folders) is refused before FTP runs.
 ## Deployment
 
 Site repositories contain only the small caller workflow (`templates/static-site/.github/workflows/deploy.yml`).
-It calls `mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@main`, which:
+It calls `mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@<platform_ref>` and passes the same
+`platform_ref` to the build-engine checkout. New clients are pinned to the platform release they were created with
+(`v1.2.0`, recorded as `platform_ref` in `site.config.yml`); nothing on platform `main` reaches a client until
+`mybizgate platform-ref <slug> --set vX.Y.Z --apply` is run for it. The reusable workflow:
 
 checkout site → checkout platform → Node 22 → `npm ci` (locked) → `resolve-target` (validates `site.config.yml`
 and the `DEPLOY_DIR`/`SITE_DOMAIN`/`SITE_NAME` variables, refuses unsafe paths) → build `dist/` → QA →

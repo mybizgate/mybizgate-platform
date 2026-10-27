@@ -72,7 +72,8 @@ test('project files are generated from config', () => {
   writeProjectFiles(cfg, dir, { env });
   for (const f of ['site.config.yml', '.gitignore', 'README.md', '.github/workflows/deploy.yml', 'index.html', 'style.css', 'script.js']) assert.ok(fs.existsSync(path.join(dir, f)), f);
   const wf = fs.readFileSync(path.join(dir, '.github/workflows/deploy.yml'), 'utf8');
-  assert.match(wf, /uses: mybizgate\/mybizgate-platform\/\.github\/workflows\/static-site-deploy\.yml@main/);
+  assert.match(wf, /uses: mybizgate\/mybizgate-platform\/\.github\/workflows\/static-site-deploy\.yml@v\d+\.\d+\.\d+\n/, 'workflow is pinned to a platform release, never @main');
+  assert.match(wf, /platform_ref: v\d+\.\d+\.\d+\n/);
   assert.doesNotMatch(wf, /dangerous-clean-slate: true/);
   assert.doesNotMatch(fs.readFileSync(path.join(dir, 'site.config.yml'), 'utf8'), /password|token/i);
   assert.match(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), /Blank Co/);

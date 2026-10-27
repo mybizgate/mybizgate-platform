@@ -21,7 +21,7 @@ export class CPanelProvider {
     if (!this.configured) {
       throw new PlatformError('cPanel API is not configured (CPANEL_HOST, CPANEL_USER, CPANEL_TOKEN).', {
         code: 'CPANEL_NOT_CONFIGURED',
-        hint: 'Export the variables in your Fish shell (e.g. `source ~/Workspace/mybizgate/.env`) before running the platform.',
+        hint: 'Add them to the workspace root .env (loaded automatically; POSIX or Fish syntax) or export them in your shell. Run `mybizgate env` to see what is set.',
       });
     }
   }

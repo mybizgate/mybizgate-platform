@@ -6,7 +6,12 @@ client:
   slug: pawhaven
 
 template:
-  type: petgate            # blank | petgate | autogate | beautygate | dentalgate | supplygate
+  id: pet-boarding/modern-01   # templates/<business-type>/<template>/ in the workspace, or "blank"
+  version: null                # copied from the template's template.yml when it has one
+  # Older configs use "type: petgate" (a demo name); that form is still accepted.
+
+platform_ref: v1.2.0       # MyBizGate platform release this site's workflow is pinned to
+                           # (change with: mybizgate platform-ref <slug> --set vX.Y.Z --apply)
 
 domain:
   type: subdomain          # subdomain | custom
@@ -17,14 +22,32 @@ domain:
   # staging: stg-pawhaven.mybizgate.com
   # dns_mode: external     # awedns | external
 
+business:                  # collected by the wizard; fills the template tokens ({{BUSINESS_NAME}}, {{WHATSAPP}}, ...)
+  whatsapp: "+60123456789" # E.164; local Malaysian numbers are normalised with a notice
+  email: hello@pawhaven.com
+  address: 12 Jalan Ampang, 55100 Kuala Lumpur
+  # short_name: Paw Haven  # menus / WhatsApp greetings (derived from the name when omitted)
+  # locality: Kuala Lumpur # area shown on the site (derived from the address when omitted)
+  # seo_title: ...         # override the template's default <title>
+  # seo_description: ...   # override the template's default meta description
+  # phone: 03-1234 5678
+  # opening_hours: Mon-Sun 9am-7pm
+  # facebook: https://facebook.com/pawhaven
+  # instagram: "@pawhaven"
+  # tiktok: "@pawhaven"
+
 hosting:
   deploy_dir: public_html/clients/pawhaven/   # clients: public_html/clients/<slug>/ only
   ftp_account: dedicated   # dedicated (restricted FTP user) | shared
 
 site:
   kind: client             # client | demo | corporate
+  environment: production  # production | staging
   production_url: https://pawhaven.mybizgate.com
   identity: Paw Haven Cat Hotel   # text expected on the homepage during health checks
+
+# Local machine paths (e.g. the client photos folder given to the wizard) are NOT stored here.
+# They live in .mybizgate.local.yml next to this file, which is gitignored and never built or deployed.
 
 build:
   exclude: []              # extra paths to leave out of dist/

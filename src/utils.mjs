@@ -46,7 +46,7 @@ let quiet = false;
 export function setQuiet(v) { quiet = Boolean(v); }
 
 function emit(tag, msg, stream = process.stdout) {
-  if (quiet && stream === process.stdout) return;
+  if (quiet) return; // tests: silence both streams
   stream.write(`${tag} ${redact(msg)}\n`);
 }
 export const log = {

@@ -10,6 +10,19 @@ export const PLATFORM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.
 export const WORKSPACE_DIR = path.resolve(PLATFORM_DIR, '..');
 export const CLIENTS_DIR = path.join(WORKSPACE_DIR, 'clients');
 
+// The platform's own version (package.json). New client workflows are pinned to the matching
+// release tag (vX.Y.Z) so a change on platform main never reaches a client until it is upgraded.
+export const PLATFORM_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(PLATFORM_DIR, 'package.json'), 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
+export const PLATFORM_RELEASE_REF = `v${PLATFORM_VERSION}`;
+export const PLATFORM_REF_RE = /^(?:v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?|main|[0-9a-f]{7,40})$/;
+
+export function validatePlatformRef(ref) {
+  if (typeof ref !== 'string' || !ref.trim()) throw new PlatformError('platform_ref is required.', { code: 'INVALID_PLATFORM_REF' });
+  const r = ref.trim();
+  if (!PLATFORM_REF_RE.test(r)) throw new PlatformError(`platform_ref "${ref}" is invalid. Use a release tag such as ${PLATFORM_RELEASE_REF} (or a commit SHA).`, { code: 'INVALID_PLATFORM_REF' });
+  return r;
+}
+
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 export const RESERVED_SLUGS = new Set([
@@ -18,7 +31,11 @@ export const RESERVED_SLUGS = new Set([
   'petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate',
 ]);
 
+// Legacy template names accepted for CLI compatibility ("blank" is the built-in starter; the demo
+// names copy a Gate demo and are deprecated). The template library in templates/ is discovered
+// dynamically by src/templates.mjs and is the normal way to choose a template.
 export const TEMPLATES = ['blank', 'petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate'];
+export const TEMPLATE_ID_RE = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*)(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
 export const DOMAIN_TYPES = ['subdomain', 'custom'];
 export const DNS_MODES = ['awedns', 'external'];
 export const SITE_KINDS = ['client', 'demo', 'corporate'];
@@ -42,7 +59,7 @@ export function loadEnv(env = process.env) {
     githubOwner: env.GITHUB_OWNER || 'mybizgate',
     githubSshHost: env.GITHUB_SSH_HOST || 'github-mybizgate',
     platformRepo: env.MYBIZGATE_PLATFORM_REPO || 'mybizgate-platform',
-    platformRef: env.MYBIZGATE_PLATFORM_REF || 'main',
+    platformRef: env.MYBIZGATE_PLATFORM_REF || PLATFORM_RELEASE_REF,
     baseDomain: env.MYBIZGATE_BASE_DOMAIN || 'mybizgate.com',
     nameservers: (env.MYBIZGATE_NAMESERVERS || 'ns1.awedns.com,ns2.awedns.com').split(',').map((s) => s.trim()).filter(Boolean),
     ghConfigDir: env.MYBIZGATE_GH_CONFIG_DIR || path.join(env.HOME || '', '.config', 'gh-mybizgate'),
@@ -100,6 +117,130 @@ export function validateBusinessName(name) {
 export function validateTemplate(t) {
   if (!TEMPLATES.includes(t)) throw new PlatformError(`Unknown template "${t}". Choose one of: ${TEMPLATES.join(', ')}.`, { code: 'INVALID_TEMPLATE' });
   return t;
+}
+
+// Template identity as stored in site.config.yml: "blank", a legacy demo name, or
+// "<business-type>/<template>" from the template library.
+export function validateTemplateId(id) {
+  if (typeof id !== 'string' || !id.trim()) throw new PlatformError('template.id is required.', { code: 'INVALID_TEMPLATE' });
+  const v = id.trim();
+  if (v.includes('..') || !TEMPLATE_ID_RE.test(v)) throw new PlatformError(`template.id "${id}" is invalid (expected <business-type>/<template>).`, { code: 'INVALID_TEMPLATE' });
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// Business information (wizard section "Business Information")
+// ---------------------------------------------------------------------------
+export const BUSINESS_FIELDS = [
+  { key: 'whatsapp', label: 'WhatsApp', required: true },
+  { key: 'email', label: 'Email', required: true },
+  { key: 'address', label: 'Address', required: true },
+  { key: 'phone', label: 'Phone', required: false },
+  { key: 'opening_hours', label: 'Opening Hours', required: false },
+  { key: 'facebook', label: 'Facebook', required: false },
+  { key: 'instagram', label: 'Instagram', required: false },
+  { key: 'tiktok', label: 'TikTok', required: false },
+];
+const DEFAULT_COUNTRY_CODE = '60'; // Malaysia
+const E164_RE = /^\+[1-9]\d{7,14}$/;
+const UNSAFE_TEXT_RE = /[\x00-\x1f<>`$\\]/;
+
+/**
+ * Normalise a WhatsApp number to E.164 (+60123456789). Local Malaysian forms such as
+ * "012-345 6789" or "60123456789" are converted; the returned `note` explains any change so the
+ * caller can report it. Values that cannot be normalised unambiguously throw.
+ */
+export function normalizeWhatsapp(raw, { countryCode = DEFAULT_COUNTRY_CODE } = {}) {
+  if (typeof raw !== 'string' || !raw.trim()) throw new PlatformError('WhatsApp number is required.', { code: 'INVALID_WHATSAPP' });
+  const original = raw.trim();
+  let v = original.replace(/^(?:https?:\/\/)?(?:wa\.me|api\.whatsapp\.com\/send\?phone=)\/?/i, '');
+  v = v.replace(/[\s().-]/g, '');
+  if (v.startsWith('00')) v = `+${v.slice(2)}`;
+  let note = null;
+  if (v.startsWith('+')) {
+    // already international
+  } else if (/^0\d+$/.test(v)) {
+    v = `+${countryCode}${v.slice(1)}`;
+    note = `interpreted as a Malaysian number (+${countryCode})`;
+  } else if (new RegExp(`^${countryCode}\\d+$`).test(v)) {
+    v = `+${v}`;
+  } else if (/^\d+$/.test(v)) {
+    throw new PlatformError(`WhatsApp number "${original}" is ambiguous. Use the international form, e.g. +60123456789.`, { code: 'INVALID_WHATSAPP' });
+  }
+  if (!E164_RE.test(v)) throw new PlatformError(`WhatsApp number "${original}" is not valid. Use the international form, e.g. +60123456789.`, { code: 'INVALID_WHATSAPP' });
+  return { value: v, changed: v !== original, note, original };
+}
+
+export function validateEmail(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) throw new PlatformError('Email is required.', { code: 'INVALID_EMAIL' });
+  const v = raw.trim();
+  if (v.length > 254 || !/^[^\s@<>()[\]\\,;:"]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(v)) {
+    throw new PlatformError(`Email "${raw}" is not a valid address.`, { code: 'INVALID_EMAIL' });
+  }
+  return v;
+}
+
+export function validateFreeText(raw, { label = 'Value', required = false, max = 300 } = {}) {
+  const v = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
+  if (!v) { if (required) throw new PlatformError(`${label} is required.`, { code: 'INVALID_INPUT' }); return ''; }
+  if (v.length > max) throw new PlatformError(`${label} must be ${max} characters or fewer.`, { code: 'INVALID_INPUT' });
+  if (UNSAFE_TEXT_RE.test(v)) throw new PlatformError(`${label} contains unsafe characters.`, { code: 'INVALID_INPUT' });
+  return v;
+}
+
+export function validatePhone(raw) {
+  const v = validateFreeText(raw, { label: 'Phone', max: 40 });
+  if (v && !/^\+?[\d\s().-]{6,}$/.test(v)) throw new PlatformError(`Phone "${raw}" is not a valid number.`, { code: 'INVALID_INPUT' });
+  return v;
+}
+
+// Social links: a full URL or a handle (with or without @); stored as given, trimmed.
+export function validateSocial(raw, { label = 'Social link' } = {}) {
+  const v = validateFreeText(raw, { label, max: 200 });
+  if (v && /\s/.test(v)) throw new PlatformError(`${label} must be a URL or a handle without spaces.`, { code: 'INVALID_INPUT' });
+  if (v && /^https?:\/\//i.test(v)) { try { new URL(v); } catch { throw new PlatformError(`${label} "${raw}" is not a valid URL.`, { code: 'INVALID_INPUT' }); } }
+  return v;
+}
+
+/**
+ * Validate the business-information fields. Required fields are only enforced when
+ * `requireContact` is true (the interactive wizard); CLI automation may omit them.
+ * Returns { business, notes } where notes describe normalisations (never silent).
+ */
+export function normalizeBusinessInfo(input = {}, { requireContact = false } = {}) {
+  const business = {};
+  const notes = [];
+  const has = (k) => typeof input[k] === 'string' && input[k].trim() !== '';
+  if (has('whatsapp') || requireContact) {
+    const w = normalizeWhatsapp(input.whatsapp);
+    business.whatsapp = w.value;
+    if (w.changed) notes.push(`WhatsApp "${w.original}" normalised to ${w.value}${w.note ? ` (${w.note})` : ''}`);
+  }
+  if (has('email') || requireContact) business.email = validateEmail(input.email);
+  if (has('address') || requireContact) business.address = validateFreeText(input.address, { label: 'Address', required: requireContact, max: 300 });
+  if (has('phone')) business.phone = validatePhone(input.phone);
+  if (has('openingHours') || has('opening_hours')) business.opening_hours = validateFreeText(input.openingHours || input.opening_hours, { label: 'Opening hours', max: 200 });
+  for (const k of ['facebook', 'instagram', 'tiktok']) if (has(k)) business[k] = validateSocial(input[k], { label: k.charAt(0).toUpperCase() + k.slice(1) });
+  // Presentation fields used by templates (all optional; templates derive defaults otherwise).
+  const text = (camel, snake, label, max) => { if (has(camel) || has(snake)) business[snake] = validateFreeText(input[camel] || input[snake], { label, max }); };
+  text('shortName', 'short_name', 'Short name', 60);
+  text('locality', 'locality', 'Locality', 80);
+  text('seoTitle', 'seo_title', 'SEO title', 120);
+  text('seoDescription', 'seo_description', 'SEO description', 320);
+  return { business, notes };
+}
+
+export function validateImagesFolder(raw) {
+  const v = typeof raw === 'string' ? raw.trim() : '';
+  if (!v) return { path: null, exists: false, images: 0 };
+  const p = path.resolve(v.replace(/^~(?=$|\/)/, process.env.HOME || '~'));
+  if (/[\x00-\x1f]/.test(p)) throw new PlatformError('Images folder path contains unsafe characters.', { code: 'INVALID_INPUT' });
+  let stat = null;
+  try { stat = fs.statSync(p); } catch { stat = null; }
+  if (!stat) return { path: p, exists: false, images: 0 };
+  if (!stat.isDirectory()) throw new PlatformError(`Images folder ${p} is not a directory.`, { code: 'INVALID_INPUT' });
+  const images = fs.readdirSync(p).filter((f) => /\.(jpe?g|png|webp|gif|svg|avif)$/i.test(f)).length;
+  return { path: p, exists: true, images };
 }
 
 export function validateDomainType(t) {
@@ -205,17 +346,20 @@ export function defaultBuildConfig() {
   };
 }
 
-export function buildSiteConfig({ name, slug, template, kind = 'client', domainType = 'subdomain', customDomain, dnsMode, visibility = 'private', ftpAccount = 'dedicated', env = loadEnv() }) {
+export function buildSiteConfig({ name, slug, template, templateVersion = null, business, platformRef, kind = 'client', domainType = 'subdomain', customDomain, dnsMode, visibility = 'private', ftpAccount = 'dedicated', env = loadEnv() }) {
   const cfg = {
     client: { name, slug },
-    template: { type: template },
+    template: { id: validateTemplateId(template), version: templateVersion || null },
+    platform_ref: validatePlatformRef(platformRef || env.platformRef),
     domain: {},
+    business: business && Object.keys(business).length ? { ...business } : undefined,
     hosting: {},
     site: {},
     build: defaultBuildConfig(),
     qa: { lighthouse: false, browser_smoke: false, screenshots: false },
     github: { repo: kind === 'client' ? naming.repoName(slug) : undefined, visibility },
   };
+  if (!cfg.business) delete cfg.business;
   if (kind === 'client') {
     cfg.hosting.deploy_dir = naming.deployDir(slug);
     cfg.hosting.ftp_account = ftpAccount;
@@ -265,8 +409,25 @@ export function validateSiteConfig(data, { source = SITE_CONFIG_FILE, repo } = {
   cfg.site = cfg.site || {};
   cfg.site.kind = cfg.site.kind || 'client';
   if (!SITE_KINDS.includes(cfg.site.kind)) fail(`site.kind must be one of ${SITE_KINDS.join(', ')}.`);
-  cfg.template = cfg.template || { type: 'blank' };
-  if (!cfg.template.type) fail('template.type is required.');
+  // template.id is the library reference (<business-type>/<template>); older configs used
+  // template.type with a demo name. Both are accepted and template.id is always populated.
+  cfg.template = cfg.template || { id: 'blank' };
+  if (typeof cfg.template !== 'object') fail('"template" must be a mapping.');
+  if (!cfg.template.id && !cfg.template.type) fail('template.id is required.');
+  cfg.template.id = validateTemplateId(cfg.template.id || cfg.template.type);
+  if (cfg.template.type && cfg.template.type !== cfg.template.id) fail(`template.type (${cfg.template.type}) and template.id (${cfg.template.id}) disagree.`);
+  if (cfg.template.version != null && (typeof cfg.template.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(cfg.template.version))) fail(`template.version "${cfg.template.version}" is not a valid semantic version.`);
+  if (cfg.template.version == null) cfg.template.version = null;
+  if (cfg.business != null) {
+    if (typeof cfg.business !== 'object' || Array.isArray(cfg.business)) fail('"business" must be a mapping.');
+    const { business } = normalizeBusinessInfo({ ...cfg.business, openingHours: cfg.business.opening_hours });
+    cfg.business = business;
+  }
+  if (cfg.platform_ref != null) cfg.platform_ref = validatePlatformRef(cfg.platform_ref);
+  // Local machine paths never belong in a committed config; they live in .mybizgate.local.yml.
+  if (cfg.assets && typeof cfg.assets === 'object' && cfg.assets.images_source) {
+    fail('assets.images_source is a local path and must not be committed; move it to .mybizgate.local.yml (gitignored).');
+  }
   if (!cfg.domain || typeof cfg.domain !== 'object') fail('missing "domain" section.');
   cfg.domain.type = cfg.domain.type || 'subdomain';
   validateDomainType(cfg.domain.type);

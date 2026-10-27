@@ -2,10 +2,12 @@
 // MyBizGate platform CLI. Thin Bash wrappers in platform/bin call this file.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { log, PlatformError, parseArgs, exists, commandExists, run, redact, timestamp, formatBytes, dirSize, readJson } from './utils.mjs';
 import {
   loadEnv, envStatus, naming, WORKSPACE_DIR, PLATFORM_DIR, CLIENTS_DIR, SITE_CONFIG_FILE, CORPORATE_REPO, DEMO_SITES,
-  loadSiteConfig, validateSiteConfig, buildSiteConfig, serializeSiteConfig, resolveSiteDir, inferSiteKind, resolveServerDir, validateDeployDir, validateSlug, TEMPLATES,
+  loadSiteConfig, validateSiteConfig, buildSiteConfig, serializeSiteConfig, resolveSiteDir, inferSiteKind, resolveServerDir, validateDeployDir, validateSlug,
+  validatePlatformRef, PLATFORM_RELEASE_REF, PLATFORM_VERSION,
 } from './config.mjs';
 import { CPanelProvider, MockCPanelProvider } from './cpanel.mjs';
 import { GitHubProvider, MockGitHubProvider } from './github.mjs';
@@ -14,7 +16,11 @@ import { checkDns, resolveNs, hostingIp, dnsInstructions, checkDelegation } from
 import { checkHttps } from './ssl.mjs';
 import { qaDist, healthCheck, waitForHealthy, assertHealthy } from './verify.mjs';
 import { buildWithEngine, summarizeReport } from './build.mjs';
-import { newClient, wizard, confirm, writeProjectFiles } from './provision.mjs';
+import { newClient, wizard, confirm, writeProjectFiles, renderCallerWorkflow, readPlatformRef, generateClientProject, normalizeInput, suggestSlug } from './provision.mjs';
+import { missingRequiredContent, formatResidue } from './personalize.mjs';
+import { PLACEHOLDER_WARNING } from './templates.mjs';
+import { loadDotenv, dotenvState, describeDotenv, DOTENV_ENV_VAR, DOTENV_TRACE_VAR, WORKSPACE_ENV_VAR } from './dotenv.mjs';
+import { templatesDir, discoverCategories, discoverTemplates, templateStatusText, BLANK_TEMPLATE, TEMPLATES_DIR_ENV_VAR } from './templates.mjs';
 
 const HELP = `MyBizGate platform CLI
 
@@ -22,13 +28,21 @@ Usage: mybizgate <command> [options]
 
 Commands:
   doctor                         Check tools, authentication, cPanel API, DNS, AutoSSL and FTP config
+  env                            Show which environment variables are set (names only, never values)
   build <site> [--out dir] [--version id] [--staging] [--report file]
                                  Build an optimised dist/ for a site directory, slug or site name
   qa <dist-dir>                  Validate a built dist/ directory
-  new-client [options]           Provision a new client (interactive when no --name is given)
-      --name "Business" --slug slug --template petgate --domain-type subdomain|custom
+  new-client [options]           Provision a new client. Interactive wizard when no --name is given
+                                 (dry run unless --apply; the wizard asks for the mode).
+      --name "Business" --slug slug --template <business-type>/<template> --domain-type subdomain|custom
       [--domain example.com.my] [--dns-mode awedns|external] [--visibility private|public]
-      [--ftp-account dedicated|shared] [--apply] [--resume] [--yes] [--mock]
+      [--whatsapp +60123456789] [--email x@y.com] [--address "..."] [--phone ...] [--opening-hours "..."]
+      [--facebook url|handle] [--instagram url|handle] [--tiktok url|handle] [--images /path/to/photos]
+      [--short-name "Paw Haven"] [--locality "Kuala Lumpur"] [--seo-title ...] [--seo-description ...]
+      [--platform-ref vX.Y.Z] [--ftp-account dedicated|shared] [--apply] [--resume] [--yes] [--mock]
+      --images is local-only input (kept in .mybizgate.local.yml, gitignored), never committed.
+      Templates are discovered from <workspace>/templates/<business-type>/<template>/;
+      --template blank creates the built-in coming-soon starter.
   site-status <site|slug>        Show local, GitHub, hosting, DNS and HTTPS status
   verify <site|slug> | --url URL [--identity text] [--expect-version id] [--wait seconds]
                                  Production health check
@@ -40,9 +54,22 @@ Commands:
   publish-platform [--apply]     Create/push the mybizgate-platform GitHub repository
   resolve-target <site> --repo owner/name [--github-output file]
                                  (CI) validate deployment target from site.config.yml / inputs
-  templates                      List available templates
+  templates                      List the template library (templates/<business-type>/<template>/)
+  render-template <ref> --out dir --name "Business" --whatsapp ... --address ... [--email ...] [--build]
+                                 Generate a personalised copy of a template locally (preview; nothing provisioned)
+  platform-ref <site|slug> [--set vX.Y.Z] [--apply]
+                                 Show the platform release a site is pinned to; --set rewrites the caller
+                                 workflow and site.config.yml and commits on main (controlled upgrade)
+  version                        Print the platform version and the release ref new clients are pinned to
+
+New client workflows are pinned to the current platform release (${PLATFORM_RELEASE_REF}); existing clients are never
+upgraded automatically. Override the default with MYBIZGATE_PLATFORM_REF or --platform-ref.
 
 All commands that change GitHub, cPanel, Git remotes or production are DRY RUN unless --apply is given.
+
+Environment: the workspace root .env (POSIX or Fish syntax) is loaded automatically before every
+command; variables already exported in the shell take precedence. Override the file with
+MYBIZGATE_DOTENV=/path/to/.env, disable with MYBIZGATE_DOTENV=0, trace with MYBIZGATE_DOTENV_TRACE=1.
 `;
 
 function makeProviders(opts, env) {
@@ -119,10 +146,51 @@ async function cmdDoctor(opts, env) {
     if (!st.FTP_USERNAME || !st.FTP_PASSWORD) return { warn: `${parts.join(', ')} (shared credential unavailable; dedicated FTP accounts will be used for clients)` };
     return { detail: parts.join(', ') };
   }, { required: false });
+  await check('Workspace .env', async () => {
+    const st = dotenvState();
+    if (st.disabled) return { warn: describeDotenv(st) };
+    if (!st.found) return { warn: describeDotenv(st) };
+    return { detail: describeDotenv(st) };
+  }, { required: false });
+  await check('Workspace root is not a Git repository', async () => {
+    if (exists(path.join(WORKSPACE_DIR, '.git'))) return { warn: `${WORKSPACE_DIR} contains .git; the workspace root must never become a repository (its .env could be committed)` };
+    return { detail: WORKSPACE_DIR };
+  }, { required: false });
+  await check('Template library', async () => {
+    const root = templatesDir();
+    if (!exists(root)) return { warn: `${root} does not exist; create templates/<business-type>/<template>/ (only --template blank is available)` };
+    const categories = discoverCategories({ root });
+    const all = categories.flatMap((c) => discoverTemplates(c.id, { root }));
+    const ready = all.filter((t) => t.usable).length;
+    const text = `${root}: ${categories.length} business type(s), ${all.length} template(s), ${ready} ready, ${all.length - ready} placeholder(s)`;
+    if (!all.length) return { warn: `${text} (no templates yet)` };
+    return { detail: text };
+  }, { required: false });
   log.raw('');
   log.raw(`Environment: ${Object.entries(envStatus()).map(([k, v]) => `${k}=${v ? 'set' : 'unset'}`).join('  ')}`);
   if (failures) { log.fail(`doctor found ${failures} problem(s)`); return 1; }
   log.ok('doctor: all required checks passed');
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// env
+// ---------------------------------------------------------------------------
+async function cmdEnv() {
+  const st = dotenvState();
+  log.raw(`Workspace root: ${st.workspaceDir || WORKSPACE_DIR}`);
+  log.raw(`.env file:      ${st.disabled ? `(disabled via ${DOTENV_ENV_VAR})` : `${st.file || '(none)'} ${st.found ? '(loaded)' : '(not found)'}`}`);
+  log.raw('');
+  const fromFile = new Set(st.loaded);
+  const kept = new Set(st.overridden);
+  for (const [key, set] of Object.entries(envStatus())) {
+    const source = !set ? 'unset' : fromFile.has(key) ? 'set (.env)' : kept.has(key) ? 'set (shell, overrides .env)' : 'set (shell)';
+    log.raw(`${key.padEnd(18)} ${source}`);
+  }
+  const extra = [...st.loaded, ...st.overridden].filter((k) => !(k in envStatus())).sort();
+  if (extra.length) { log.raw(''); log.raw(`Other names in .env: ${extra.join(', ')}`); }
+  log.raw('');
+  log.raw(`Override: ${DOTENV_ENV_VAR}=/path/to/.env   Disable: ${DOTENV_ENV_VAR}=0   Workspace: ${WORKSPACE_ENV_VAR}=/path`);
   return 0;
 }
 
@@ -189,18 +257,55 @@ async function cmdResolveTarget(opts, env) {
 // ---------------------------------------------------------------------------
 async function cmdNewClient(opts, env) {
   const { cpanel, github } = makeProviders(opts, env);
+  const str = (v) => (typeof v === 'string' ? v : undefined);
   let input = {
-    name: opts.name, slug: opts.slug, template: opts.template, domainType: opts.domainType, domain: opts.domain, dnsMode: opts.dnsMode,
-    visibility: opts.visibility, ftpAccount: opts.ftpAccount, dnsWaitMinutes: opts.dnsWait,
+    name: str(opts.name), slug: str(opts.slug), template: str(opts.template), domainType: str(opts.domainType), domain: str(opts.domain), dnsMode: str(opts.dnsMode),
+    visibility: str(opts.visibility), ftpAccount: str(opts.ftpAccount), dnsWaitMinutes: opts.dnsWait,
+    whatsapp: str(opts.whatsapp), email: str(opts.email), address: str(opts.address), phone: str(opts.phone), openingHours: str(opts.openingHours),
+    facebook: str(opts.facebook), instagram: str(opts.instagram), tiktok: str(opts.tiktok), images: str(opts.images),
+    shortName: str(opts.shortName), locality: str(opts.locality), seoTitle: str(opts.seoTitle), seoDescription: str(opts.seoDescription), platformRef: str(opts.platformRef),
+    apply: opts.apply === true ? true : undefined,
   };
   const resume = Boolean(opts.resume);
+  let interactive = false;
   if (!resume && !input.name) {
-    if (!process.stdin.isTTY) throw new PlatformError('No --name given and no interactive terminal available.', { hint: 'Pass --name, --slug, --template and --domain-type for non-interactive use.' });
+    // Interactive mode: the wizard collects everything (and the mode) from the terminal.
+    if (!process.stdin.isTTY) throw new PlatformError('No --name given and no interactive terminal available.', { hint: 'Pass --name, --slug, --template and --domain-type for non-interactive use (see: mybizgate help).' });
     input = await wizard(input, env);
+    interactive = true;
   }
-  if (!resume && !input.slug) throw new PlatformError('--slug is required.');
-  const r = await newClient(input, { env, cpanel, github, apply: Boolean(opts.apply), resume, yes: Boolean(opts.yes) });
+  if (!resume && !input.slug) throw new PlatformError('--slug is required.', { hint: 'Example: --name "Paw Haven Cat Hotel" --slug pawhaven --template pet-boarding/modern-01 --domain-type subdomain' });
+  if (!resume && !interactive && !input.template) throw new PlatformError('--template is required.', { hint: 'Run "mybizgate templates" to list the template library, or use --template blank.' });
+  const apply = Boolean(opts.apply) || input.apply === true;
+  const r = await newClient(input, { env, cpanel, github, apply, resume, yes: Boolean(opts.yes), requireContact: interactive });
   return r && (r.aborted ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
+// templates
+// ---------------------------------------------------------------------------
+async function cmdTemplates() {
+  const root = templatesDir();
+  log.raw(`Template library: ${root}${process.env[TEMPLATES_DIR_ENV_VAR] ? ` (from ${TEMPLATES_DIR_ENV_VAR})` : ''}`);
+  log.raw('');
+  const categories = exists(root) ? discoverCategories({ root }) : [];
+  if (!categories.length) log.warn(`No business types found. Create ${path.join(root, '<business-type>', '<template>')}/ to add one.`);
+  let total = 0;
+  for (const c of categories) {
+    const templates = discoverTemplates(c.id, { root });
+    log.raw(`${c.name} (${c.id}/)`);
+    if (!templates.length) log.raw('  (no templates)');
+    for (const t of templates) {
+      total += 1;
+      log.raw(`  ${t.ref.padEnd(34)} ${t.name.padEnd(24)} ${templateStatusText(t)}`);
+      for (const w of t.warnings) log.warn(`  ${w}`);
+    }
+  }
+  log.raw('');
+  log.raw(`${BLANK_TEMPLATE.padEnd(36)} Blank starter            built-in coming-soon page (--template ${BLANK_TEMPLATE})`);
+  log.raw('');
+  log.info(`${categories.length} business type(s), ${total} template(s). Add a directory under ${path.relative(WORKSPACE_DIR, root) || root}/ and it appears here and in the wizard automatically.`);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,8 +551,91 @@ function writeMigrationFiles(siteDir, cfg, env) {
     if (add.length) fs.writeFileSync(gi, `${have.trimEnd()}\n\n# MyBizGate platform\n${add.join('\n')}\n`);
   }
   fs.mkdirSync(path.join(siteDir, '.github', 'workflows'), { recursive: true });
-  const wf = fs.readFileSync(path.join(tpl, '.github', 'workflows', 'deploy.yml'), 'utf8').replace('mybizgate/mybizgate-platform/', `${env.githubOwner}/${env.platformRepo}/`).replace('@main', `@${env.platformRef}`);
-  fs.writeFileSync(path.join(siteDir, '.github', 'workflows', 'deploy.yml'), wf);
+  fs.writeFileSync(path.join(siteDir, '.github', 'workflows', 'deploy.yml'), renderCallerWorkflow(env, cfg.platform_ref || env.platformRef));
+}
+
+// ---------------------------------------------------------------------------
+// platform-ref: show or change the platform release a site is pinned to
+// ---------------------------------------------------------------------------
+async function cmdPlatformRef(opts, env) {
+  const siteDir = resolveSiteDir(opts._[0]);
+  const current = readPlatformRef(siteDir);
+  let cfg = null;
+  try { cfg = loadSiteConfig(siteDir); } catch (err) { log.warn(err.message); }
+  log.raw(`Site:            ${siteDir}`);
+  log.raw(`Workflow pin:    ${current || '(no caller workflow found)'}`);
+  log.raw(`site.config.yml: ${cfg && cfg.platform_ref ? cfg.platform_ref : '(not recorded)'}`);
+  log.raw(`Current release: ${PLATFORM_RELEASE_REF} (this platform checkout)`);
+  if (current === 'main') log.warn('This site follows platform main; every platform change reaches it immediately. Pin it with --set.');
+  if (!opts.set) return 0;
+  const target = validatePlatformRef(String(opts.set));
+  if (target === 'main') log.warn('Pinning to main is allowed but not recommended.');
+  const apply = Boolean(opts.apply);
+  const wfPath = path.join(siteDir, '.github', 'workflows', 'deploy.yml');
+  const newWorkflow = renderCallerWorkflow(env, target);
+  const cfgPath = path.join(siteDir, SITE_CONFIG_FILE);
+  log.raw('');
+  log.plan(`Rewrite ${path.relative(siteDir, wfPath)} to use ${env.githubOwner}/${env.platformRepo}@${target} (was ${current || 'none'})`);
+  log.plan(`Record platform_ref: ${target} in ${SITE_CONFIG_FILE}`);
+  log.plan(`Commit on main: "Pin MyBizGate platform to ${target}" (not pushed; release with the usual deploy fast-forward)`);
+  if (!apply) { log.dry('Dry run. Re-run with --apply to change the pin.'); return 0; }
+  if (!(await git.isRepo(siteDir))) throw new PlatformError(`${siteDir} is not a Git repository.`);
+  if (!(await git.isClean(siteDir))) throw new PlatformError('Working tree is not clean; commit or stash first.');
+  const before = await git.currentBranch(siteDir);
+  if (before !== 'main') await git.checkout(siteDir, 'main');
+  try {
+    fs.mkdirSync(path.dirname(wfPath), { recursive: true });
+    fs.writeFileSync(wfPath, newWorkflow);
+    if (exists(cfgPath)) {
+      const text = fs.readFileSync(cfgPath, 'utf8');
+      const updated = /^platform_ref:.*$/m.test(text) ? text.replace(/^platform_ref:.*$/m, `platform_ref: ${target}`) : text.replace(/^(template:\n(?:[ \t]+.*\n)*)/m, `$1platform_ref: ${target}\n`);
+      fs.writeFileSync(cfgPath, updated.includes(`platform_ref: ${target}`) ? updated : `${text.trimEnd()}\nplatform_ref: ${target}\n`);
+      loadSiteConfig(siteDir); // must still validate
+    }
+    await git.addAll(siteDir);
+    const sha = await git.commit(siteDir, `Pin MyBizGate platform to ${target}`);
+    log.ok(sha ? `Committed ${sha} on main` : 'Nothing to commit (already pinned)');
+  } finally { if (before && before !== 'main') await git.checkout(siteDir, before); }
+  log.info(`Next: review, push main, then release: git checkout deploy && git merge --ff-only main && git push origin deploy`);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// render-template: generate a personalised copy locally for inspection (no provisioning)
+// ---------------------------------------------------------------------------
+async function cmdRenderTemplate(opts, env) {
+  const ref = opts._[0];
+  if (!ref) throw new PlatformError('Template reference required, e.g. pet-boarding/modern-01.');
+  if (!opts.out) throw new PlatformError('--out <directory> is required (an empty or new directory).');
+  const out = path.resolve(String(opts.out));
+  if (exists(out) && fs.readdirSync(out).length) throw new PlatformError(`${out} is not empty; refusing to overwrite.`);
+  const str = (v) => (typeof v === 'string' ? v : undefined);
+  const name = str(opts.name) || 'Example Business';
+  const input = normalizeInput({
+    name, slug: str(opts.slug) || suggestSlug(name), template: ref, domainType: 'subdomain',
+    whatsapp: str(opts.whatsapp), email: str(opts.email), address: str(opts.address), phone: str(opts.phone), openingHours: str(opts.openingHours),
+    facebook: str(opts.facebook), instagram: str(opts.instagram), tiktok: str(opts.tiktok), shortName: str(opts.shortName), locality: str(opts.locality),
+    seoTitle: str(opts.seoTitle), seoDescription: str(opts.seoDescription),
+  }, env);
+  const tpl = input.templateRecord;
+  if (!tpl.usable) throw new PlatformError(PLACEHOLDER_WARNING(tpl.ref), { code: 'TEMPLATE_PLACEHOLDER' });
+  const missing = missingRequiredContent(tpl, { client: { name }, business: input.business });
+  if (missing.length) throw new PlatformError(`Template ${tpl.ref} requires: ${missing.join(', ')}.`, { hint: `Pass ${missing.map((k) => `--${k.replace(/_/g, '-')}`).join(' ')}` });
+  const cfg = validateSiteConfig(buildSiteConfig({ ...input, kind: 'client', env }));
+  const g = generateClientProject(cfg, out, { template: tpl, env });
+  log.ok(`${g.files} template file(s) copied to ${out}; ${g.personalized.files.length} personalised with tokens: ${g.personalized.tokens.join(', ')}`);
+  if (g.residue.ok) log.ok('Residue scan clean');
+  else { log.fail('Template personalisation incomplete'); for (const l of formatResidue(g.residue.findings)) log.fail(`  ${l}`); return 1; }
+  if (opts.build) {
+    const report = await buildWithEngine(out, { version: 'preview', out: path.join(out, 'dist') });
+    const qa = await qaDist(path.join(out, 'dist'));
+    for (const e of qa.errors) log.fail(e);
+    if (!qa.ok) return 1;
+    const s = summarizeReport(report);
+    log.ok(`Build + QA PASS: ${qa.files} files; source ${s.source} -> dist ${s.dist}`);
+  }
+  log.info(`Preview: python3 -m http.server 8000 --directory ${out}`);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -527,11 +715,15 @@ async function cmdPublishPlatform(opts, env) {
 // ---------------------------------------------------------------------------
 export async function main(argv) {
   const [command, ...rest] = argv;
-  const opts = parseArgs(rest, { booleans: ['apply', 'resume', 'yes', 'mock', 'staging', 'help'], aliases: { y: 'yes' } });
+  const opts = parseArgs(rest, { booleans: ['apply', 'resume', 'yes', 'mock', 'staging', 'help', 'build'], aliases: { y: 'yes' } });
+  // Load the workspace .env (names only are ever reported) before reading the environment.
+  const dotenv = loadDotenv({ platformDir: PLATFORM_DIR });
+  if (process.env[DOTENV_TRACE_VAR] === '1') log.info(`.env: ${describeDotenv(dotenv)}`);
   const env = loadEnv();
   if (!command || command === 'help' || command === '--help' || opts.help) { process.stdout.write(HELP); return 0; }
   switch (command) {
     case 'doctor': return cmdDoctor(opts, env);
+    case 'env': return cmdEnv(opts, env);
     case 'build': return cmdBuild(opts, env);
     case 'qa': return cmdQa(opts, env);
     case 'resolve-target': return cmdResolveTarget(opts, env);
@@ -542,15 +734,22 @@ export async function main(argv) {
     case 'rollback': return cmdRollback(opts, env);
     case 'dns-instructions': return cmdDnsInstructions(opts, env);
     case 'publish-platform': return cmdPublishPlatform(opts, env);
-    case 'templates': for (const t of TEMPLATES) log.raw(t); return 0;
+    case 'templates': return cmdTemplates(opts, env);
+    case 'platform-ref': return cmdPlatformRef(opts, env);
+    case 'render-template': return cmdRenderTemplate(opts, env);
+    case 'version': log.raw(`mybizgate-platform ${PLATFORM_VERSION} (release ref ${PLATFORM_RELEASE_REF})`); return 0;
     default: throw new PlatformError(`Unknown command "${command}".`, { hint: 'Run: mybizgate help' });
   }
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+function realpathOr(p) { try { return fs.realpathSync(p); } catch { return path.resolve(p); } }
+// Compare real paths so the CLI also works when platform/ is reached through a symlink.
+const isMain = Boolean(process.argv[1]) && realpathOr(process.argv[1]) === realpathOr(fileURLToPath(import.meta.url));
 if (isMain) {
   main(process.argv.slice(2)).then((code) => process.exit(code || 0)).catch((err) => {
-    log.fail(err instanceof PlatformError ? err.message : redact(err.stack || err.message));
+    // Validation problems are reported as tagged lines, never as stack traces.
+    const text = err instanceof PlatformError ? err.message : redact(err.stack || err.message);
+    for (const line of String(text).split('\n')) log.fail(line);
     if (err.hint) log.info(err.hint);
     process.exit(1);
   });

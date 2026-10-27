@@ -18,7 +18,7 @@
 
 ## cPanel / hosting
 
-- `CPANEL_HOST`, `CPANEL_USER`, `CPANEL_TOKEN` are exported in the shell (Fish `.env`). API-token auth on port 2083 works.
+- `CPANEL_HOST`, `CPANEL_USER`, `CPANEL_TOKEN` live in the workspace root `.env` (Fish or POSIX syntax) and are loaded automatically by every platform command; shell exports take precedence. API-token auth on port 2083 works.
 - Domains: main `mybizgate.com`; subdomains petgate, supplygate, beautygate, dentalgate, autogate (`public_html/site-*`). No addon domains. `api-test.mybizgate.com` no longer exists, but `public_html/clients/api-test/` is left over (not deleted; remove manually if unwanted).
 - `public_html/` contains the corporate site files plus `site-*`, `clients/`, `assets/`, `cgi-bin/`, `.well-known/`, a server-managed `.htaccess`, `.user.ini`, `php.ini`, and FTP-Deploy sync-state files in `public_html/` and `public_html/site-petgate/`.
 - FTP accounts: main, `deploy@mybizgate.com` (home `public_html`, the shared deploy credential used by GitHub secrets), logs.
