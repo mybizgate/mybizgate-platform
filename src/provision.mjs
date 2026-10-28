@@ -12,7 +12,7 @@ import * as yaml from 'js-yaml';
 import { log, PlatformError, exists, readJson, writeJson, commandExists } from './utils.mjs';
 import {
   loadEnv, naming, validateSlug, validateBusinessName, validateDomainType, validateDnsMode, validateVisibility,
-  validateCustomDomain, buildSiteConfig, serializeSiteConfig, loadSiteConfig, DOMAIN_TYPES, DNS_MODES, VISIBILITIES,
+  validateCustomDomain, validateProjectType, buildSiteConfig, serializeSiteConfig, loadSiteConfig, DOMAIN_TYPES, DNS_MODES, VISIBILITIES,
   WORKSPACE_DIR, PLATFORM_DIR, SITE_CONFIG_FILE, validateSiteConfig, validatePlatformRef, PLATFORM_VERSION,
   BUSINESS_FIELDS, normalizeWhatsapp, validateEmail, validateFreeText, validatePhone, validateSocial, normalizeBusinessInfo, validateImagesFolder,
 } from './config.mjs';
@@ -39,6 +39,7 @@ export const WIZARD_TITLE = 'MyBizgate - Multi Tenancy SaaS Wizard';
 const RULE = '='.repeat(56);
 const THIN_RULE = '-'.repeat(56);
 export const DOMAIN_TYPE_LABELS = { subdomain: 'MyBizGate Subdomain', custom: 'Client Custom Domain' };
+export const PROJECT_TYPE_LABELS = { client: 'Client Website', demo: 'Demo Website' };
 const DNS_MODE_LABELS = { external: 'External DNS (client keeps their nameservers; A-record instructions are generated)', awedns: 'AweDNS nameservers (client points the domain at ns1/ns2.awedns.com)' };
 export const MODES = [{ id: 'dry-run', label: 'Dry Run' }, { id: 'apply', label: 'Apply / Provision' }];
 
@@ -95,15 +96,23 @@ export async function wizard(initial = {}, env = loadEnv(), { io = createConsole
     io.write(wizardHeader());
     say('');
 
-    // ---- Client information -------------------------------------------------
-    section('Client Information');
+    // ---- Project type and identity ------------------------------------------
+    if (!out.projectType) {
+      const chosen = await askMenu('Project Type', Object.entries(PROJECT_TYPE_LABELS).map(([id, label]) => ({ id, label })), { prompt: 'Create as', def: 1 });
+      out.projectType = chosen.id;
+    } else {
+      validateProjectType(out.projectType);
+      say(`Project Type: ${PROJECT_TYPE_LABELS[out.projectType]}`); say('');
+    }
+    const isDemo = out.projectType === 'demo';
+    section(isDemo ? 'Demo Information' : 'Client Information');
     if (!out.name) out.name = await askText('Business Name', { validate: validateBusinessName });
     else { say(`Business Name: ${out.name}`); say(''); }
     if (!out.slug) {
       const suggested = suggestSlug(out.name);
       say('Suggested slug:'); say(suggested || '(none)'); say('');
-      out.slug = await askText('Client slug', { def: suggested, validate: validateSlug, hint: suggested ? 'Enter to accept the suggestion' : 'lowercase letters, digits and hyphens' });
-    } else { validateSlug(out.slug); say(`Client slug: ${out.slug}`); say(''); }
+      out.slug = await askText(isDemo ? 'Demo slug' : 'Client slug', { def: suggested, validate: validateSlug, hint: suggested ? 'Enter to accept the suggestion' : 'lowercase letters, digits and hyphens' });
+    } else { validateSlug(out.slug); say(`${isDemo ? 'Demo' : 'Client'} slug: ${out.slug}`); say(''); }
     if (!out.shortName) {
       const derived = deriveShortName(out.name);
       out.shortName = await askText('Short name shown in menus and WhatsApp greetings', { def: derived, optional: true, validate: (v) => validateFreeText(v, { label: 'Short name', max: 60 }), hint: `Enter for "${derived}"` });
@@ -136,13 +145,17 @@ export async function wizard(initial = {}, env = loadEnv(), { io = createConsole
     out.businessType = template.categoryName;
 
     // ---- Domain -------------------------------------------------------------
-    if (!out.domainType) {
+    if (isDemo) {
+      if (out.domainType && out.domainType !== 'subdomain') throw new PlatformError('Demo projects support the MyBizGate subdomain only.', { code: 'INVALID_DOMAIN_TYPE' });
+      out.domainType = 'subdomain';
+      say(`Demo Domain: ${naming.subdomainHost(out.slug, env)}`); say('');
+    } else if (!out.domainType) {
       const d = await askMenu('Domain Type', DOMAIN_TYPES.map((t, i) => ({ id: t, label: DOMAIN_TYPE_LABELS[t] })), { def: 1 });
       out.domainType = d.id;
     } else validateDomainType(out.domainType);
-    if (out.domainType === 'subdomain') {
+    if (!isDemo && out.domainType === 'subdomain') {
       say(`Domain: ${naming.subdomainHost(out.slug, env)}`); say('');
-    } else {
+    } else if (!isDemo) {
       if (!out.domain) out.domain = await askText('Custom domain', { validate: (v) => validateCustomDomain(v, env), hint: 'e.g. pawhaven.com.my' });
       if (!out.dnsMode) { const m = await askMenu('DNS Mode', ['external', 'awedns'].filter((t) => DNS_MODES.includes(t)).map((t) => ({ id: t, label: DNS_MODE_LABELS[t] })), { def: 1 }); out.dnsMode = m.id; }
       else validateDnsMode(out.dnsMode);
@@ -173,11 +186,11 @@ export async function wizard(initial = {}, env = loadEnv(), { io = createConsole
       }
     }
 
-    // ---- Client images ------------------------------------------------------
-    section('Client Images');
-    if (out.images == null) out.images = await askText('Client images folder', { optional: true, hint: 'optional, e.g. /home/jul/Downloads/pawhaven' });
+    // ---- Project images -----------------------------------------------------
+    section(isDemo ? 'Demo Images' : 'Client Images');
+    if (out.images == null) out.images = await askText(isDemo ? 'Demo images folder' : 'Client images folder', { optional: true, hint: 'optional, e.g. /home/jul/Downloads/pawhaven' });
     const images = validateImagesFolder(out.images);
-    if (!images.path) status('[INFO]', 'No client image folder supplied.');
+    if (!images.path) status('[INFO]', `No ${isDemo ? 'demo' : 'client'} image folder supplied.`);
     else if (!images.exists) status('[WARN]', `Images folder ${images.path} does not exist yet; recorded locally in ${LOCAL_CONFIG_FILE} (never committed).`);
     else status('[ OK ]', `${images.images} image file(s) found in ${images.path} (recorded locally in ${LOCAL_CONFIG_FILE}, never committed)`);
     say('');
@@ -212,15 +225,27 @@ export function statePath(clientDir) { return path.join(clientDir, '.mybizgate',
 export function loadState(clientDir) { return readJson(statePath(clientDir), null); }
 export function saveState(clientDir, state) { state.updatedAt = new Date().toISOString(); writeJson(statePath(clientDir), state); }
 
+function resolveProvisioningDir(slug, projectType) {
+  if (projectType) return naming.projectDir(validateProjectType(projectType), slug);
+  const matches = ['client', 'demo']
+    .map((kind) => ({ kind, dir: naming.projectDir(kind, slug) }))
+    .filter(({ dir }) => exists(dir));
+  if (matches.length === 1) return matches[0].dir;
+  if (matches.length > 1) throw new PlatformError(`Both client and demo projects exist for slug "${slug}".`, { hint: 'Re-run with --project-type client or --project-type demo.' });
+  return naming.clientDir(slug);
+}
+
 // ---------------------------------------------------------------------------
 // Input -> config
 // ---------------------------------------------------------------------------
 export function normalizeInput(input, env = loadEnv(), { templatesRoot = templatesDir(), requireContact = false } = {}) {
   const name = validateBusinessName(input.name);
   const slug = validateSlug(input.slug);
+  const projectType = validateProjectType(input.projectType || 'client');
   const templateRecord = resolveTemplate(input.template || BLANK_TEMPLATE, { root: templatesRoot });
   const domainType = validateDomainType(input.domainType || 'subdomain');
-  const visibility = validateVisibility(input.visibility || 'private');
+  if (projectType === 'demo' && domainType !== 'subdomain') throw new PlatformError('Demo projects support the MyBizGate subdomain only.', { code: 'INVALID_DOMAIN_TYPE' });
+  const visibility = validateVisibility(input.visibility || (projectType === 'demo' ? 'public' : 'private'));
   let customDomain; let dnsMode;
   if (domainType === 'custom') {
     customDomain = validateCustomDomain(input.domain, env);
@@ -231,7 +256,7 @@ export function normalizeInput(input, env = loadEnv(), { templatesRoot = templat
   const images = validateImagesFolder(input.images);
   const platformRef = validatePlatformRef(input.platformRef || env.platformRef);
   return {
-    name, slug, template: templateRecord.ref, templateRecord, templateVersion: templateRecord.version, businessType: input.businessType || templateRecord.categoryName,
+    name, slug, projectType, template: templateRecord.ref, templateRecord, templateVersion: templateRecord.version, businessType: input.businessType || templateRecord.categoryName,
     domainType, visibility, customDomain, dnsMode, ftpAccount, business, businessNotes: notes, platformRef,
     // Local-only input: kept out of site.config.yml on purpose (machine path).
     images, local: { images_source: images.path },
@@ -273,7 +298,7 @@ export function planFor(cfg, env = loadEnv()) {
   const slug = cfg.client.slug;
   const repo = cfg.github.repo;
   const lines = [];
-  lines.push({ id: 'project', text: `Create ${path.relative(WORKSPACE_DIR, naming.clientDir(slug))}/ from template "${cfg.template.id}"` });
+  lines.push({ id: 'project', text: `Create ${path.relative(WORKSPACE_DIR, naming.projectDir(cfg.site.kind, slug))}/ from template "${cfg.template.id}"` });
   lines.push({ id: 'config', text: `Write ${SITE_CONFIG_FILE}, .gitignore, README.md and the minimal deploy workflow` });
   lines.push({ id: 'git', text: 'Initialise Git with branches main (development) and deploy (production)' });
   lines.push({ id: 'github', text: `Create GitHub repository ${env.githubOwner}/${repo} (${cfg.github.visibility}) and set remote ${naming.sshRemote(repo, env)}` });
@@ -288,7 +313,9 @@ export function planFor(cfg, env = loadEnv()) {
 // The block shown before anything is created (wizard and CLI mode alike).
 export function clientSummary(cfg, env = loadEnv(), { template, businessType, apply = false, images } = {}) {
   const row = (k, v) => `${k.padEnd(17)}: ${v}`;
-  const lines = [THIN_RULE, 'NEW CLIENT SUMMARY', THIN_RULE];
+  const isDemo = cfg.site.kind === 'demo';
+  const lines = [THIN_RULE, `NEW ${isDemo ? 'DEMO' : 'CLIENT'} SUMMARY`, THIN_RULE];
+  lines.push(row('Project Type', PROJECT_TYPE_LABELS[cfg.site.kind] || humanize(cfg.site.kind)));
   lines.push(row('Business', cfg.client.name));
   lines.push(row('Slug', cfg.client.slug));
   lines.push(row('Business Type', businessType || (template && template.categoryName) || humanize((cfg.template.id.split('/')[0]) || '')));
@@ -401,7 +428,7 @@ export function writeProjectFiles(cfg, clientDir, { env = loadEnv(), local } = {
 }
 
 /**
- * Generate a complete, personalised client project at `dir` from the template and config.
+ * Generate a complete, personalised project at `dir` from the template and config.
  * Local only: copies the template source, writes the platform files, applies the business
  * information to every token and scans for residue. Returns what happened; it does not throw on
  * residue so callers (dry run, apply) can decide how to report it.
@@ -430,7 +457,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
 
   if (resume) {
     validateSlug(resumeSlug);
-    clientDir = naming.clientDir(resumeSlug);
+    clientDir = resolveProvisioningDir(resumeSlug, rawInput.projectType);
     if (!exists(clientDir)) throw new PlatformError(`Cannot resume: ${clientDir} does not exist.`);
     cfg = loadSiteConfig(clientDir);
     state = loadState(clientDir) || { slug: resumeSlug, steps: {} };
@@ -439,9 +466,9 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   } else {
     input = normalizeInput(rawInput, env, { templatesRoot, requireContact });
     tpl = input.templateRecord;
-    cfg = validateSiteConfig(buildSiteConfig({ ...input, kind: 'client', env }));
-    clientDir = naming.clientDir(cfg.client.slug);
-    state = loadState(clientDir) || { slug: cfg.client.slug, createdAt: new Date().toISOString(), steps: {} };
+    cfg = validateSiteConfig(buildSiteConfig({ ...input, kind: input.projectType, env }));
+    clientDir = naming.projectDir(cfg.site.kind, cfg.client.slug);
+    state = loadState(clientDir) || { slug: cfg.client.slug, kind: cfg.site.kind, createdAt: new Date().toISOString(), steps: {} };
   }
   const slug = cfg.client.slug;
   const repo = cfg.github.repo;
@@ -476,7 +503,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
     if (input.images.path && !input.images.exists) log.warn(`Images folder ${input.images.path} does not exist yet.`);
   }
   log.check(`Platform release ${cfg.platform_ref}`);
-  log.ok(`client workflow will be pinned to ${env.githubOwner}/${env.platformRepo}@${cfg.platform_ref}`);
+  log.ok(`project workflow will be pinned to ${env.githubOwner}/${env.platformRepo}@${cfg.platform_ref}`);
 
   // ---- Collisions -------------------------------------------------------------
   log.check(`Local folder ${path.relative(WORKSPACE_DIR, clientDir)}`);
@@ -524,7 +551,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   const contentBlocked = missingContent.length > 0;
 
   // ---- Local preflight: generate + personalise + residue scan in a temp dir ------------
-  // Proves the client identity is applied before anything remote exists (both modes).
+  // Proves the project identity is applied before anything remote exists (both modes).
   let preflight = null;
   if (!templateBlocked && !contentBlocked && !done('project')) {
     log.check('Local preflight (generate, personalise, residue scan)');
@@ -556,10 +583,16 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
     if (!(await confirm('Proceed with provisioning?', { io }))) { log.info('Aborted by user. Nothing was created.'); return { cfg, clientDir, aborted: true }; }
   }
   if (!ghAuth.ok) throw new PlatformError('GitHub authentication is required for --apply.', { hint: github.requireAuthHint ? github.requireAuthHint() : 'Run gh auth login' });
+  if (!(await github.refExists(env.platformRepo, cfg.platform_ref))) {
+    throw new PlatformError(`Platform release ${env.githubOwner}/${env.platformRepo}@${cfg.platform_ref} is not available on GitHub.`, {
+      code: 'PLATFORM_REF_MISSING',
+      hint: `Publish and tag ${cfg.platform_ref} in the platform repository before provisioning. Nothing was created.`,
+    });
+  }
   cpanel.requireConfigured();
 
   // ---- 1. Project files: generate -> personalise -> residue validation (all local) ----
-  log.step('Create client project');
+  log.step(`Create ${cfg.site.kind} project`);
   const existedBefore = exists(clientDir);
   if (!done('project')) {
     let g;

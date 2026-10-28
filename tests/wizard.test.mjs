@@ -47,6 +47,7 @@ function cleanEnv(extra = {}) {
 test('wizard: header, dynamic menus, slug suggestion, placeholder warning, dry-run default', async () => {
   const root = fakeLibrary();
   const io = createScriptedIo([
+    '',                     // project type -> default [1] Client Website
     'Paw Haven Cat Hotel', // Business Name
     'pawhaven',            // Client slug (suggestion shown first)
     '',                    // Short name -> derived "Paw Haven"
@@ -63,6 +64,7 @@ test('wizard: header, dynamic menus, slug suggestion, placeholder warning, dry-r
   const text = io.text;
   assert.match(text, /={56}\n {8}MyBizgate - Multi Tenancy SaaS Wizard\n={56}\n/);
   assert.equal(WIZARD_TITLE, 'MyBizgate - Multi Tenancy SaaS Wizard');
+  assert.match(text, /Project Type\n\n\[1\] Client Website\n\[2\] Demo Website\n\nCreate as \[1\]:\n> \n/);
   assert.match(text, /Client Information\n\nBusiness Name:\n> Paw Haven Cat Hotel\n/);
   assert.match(text, /Suggested slug:\npaw-haven-cat-hotel\n/);
   assert.match(text, /Available Business Types\n\n\[1\] Automotive\n\[2\] Beauty\n\[3\] Dental\n\[4\] General Business\n\[5\] Pet Boarding\n\[6\] Supplier\n\nSelect business type:\n> 5\n/);
@@ -74,6 +76,7 @@ test('wizard: header, dynamic menus, slug suggestion, placeholder warning, dry-r
   assert.match(text, /Client images folder \(optional, e\.g\. [^)]*\):\n> \n\n\[INFO\] No client image folder supplied\./);
   assert.match(text, /Mode\n\n\[1\] Dry Run\n\[2\] Apply \/ Provision\n\nSelect \[1\]:\n> \n/);
   assert.equal(out.name, 'Paw Haven Cat Hotel');
+  assert.equal(out.projectType, 'client');
   assert.equal(out.slug, 'pawhaven');
   assert.equal(out.template, 'pet-boarding/modern-01', 'internal reference is the path, not the display name');
   assert.equal(out.businessType, 'Pet Boarding');
@@ -88,6 +91,7 @@ test('wizard: header, dynamic menus, slug suggestion, placeholder warning, dry-r
 test('wizard: invalid slug, invalid selections and invalid contact details are re-asked; Apply mode can be chosen', async () => {
   const root = fakeLibrary();
   const io = createScriptedIo([
+    'client',
     'Dr Smile Dental',
     'Bad Slug', 'paw_haven', 'drsmile',   // two invalid slugs then a valid one
     'Dr Smile',                           // short name
@@ -124,7 +128,7 @@ test('wizard: invalid slug, invalid selections and invalid contact details are r
 
 test('wizard: custom domain flow keeps the DNS mode question and staging host', async () => {
   const root = fakeLibrary();
-  const io = createScriptedIo(['Paw Haven', 'pawhaven', '', '5', '2', '2', 'pawhaven.com.my', '', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', '']);
+  const io = createScriptedIo(['', 'Paw Haven', 'pawhaven', '', '5', '2', '2', 'pawhaven.com.my', '', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', '']);
   const out = await wizard({}, env, { io, templatesRoot: root });
   assert.match(io.text, /Custom domain \(e\.g\. pawhaven\.com\.my\):\n> pawhaven\.com\.my\n/);
   assert.match(io.text, /DNS Mode\n\n\[1\] External DNS/);
@@ -137,22 +141,38 @@ test('wizard: custom domain flow keeps the DNS mode question and staging host', 
 
 test('wizard: an empty business type is reported and re-asked; an empty library fails with guidance', async () => {
   const root = fakeLibrary();
-  const io = createScriptedIo(['Auto Co', 'autoco', '', '1', '5', '2', '1', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', '']);
+  const io = createScriptedIo(['', 'Auto Co', 'autoco', '', '1', '5', '2', '1', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', '']);
   const out = await wizard({}, env, { io, templatesRoot: root });
   assert.match(io.text, /\[WARN\] No templates found under .*automotive\/\. Choose another business type\./);
   assert.equal(out.template, 'pet-boarding/playful-01');
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'mbg-empty-'));
-  await assert.rejects(wizard({}, env, { io: createScriptedIo(['X Co', 'xco', '']), templatesRoot: empty }), /No business types found/);
+  await assert.rejects(wizard({}, env, { io: createScriptedIo(['', 'X Co', 'xco', '']), templatesRoot: empty }), /No business types found/);
 });
 
 test('wizard: values given on the command line are not asked again and --apply skips the mode question', async () => {
   const root = fakeLibrary();
   const io = createScriptedIo(['', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '']);
-  const out = await wizard({ name: 'Given Co', slug: 'givenco', template: 'pet-boarding/modern-01', domainType: 'subdomain', apply: true }, env, { io, templatesRoot: root });
+  const out = await wizard({ name: 'Given Co', slug: 'givenco', projectType: 'client', template: 'pet-boarding/modern-01', domainType: 'subdomain', apply: true }, env, { io, templatesRoot: root });
   assert.doesNotMatch(io.text, /Available Business Types/);
   assert.match(io.text, /\[INFO\] Mode: Apply \/ Provision \(--apply given on the command line\)/);
   assert.equal(out.apply, true);
   assert.equal(out.businessType, 'Pet Boarding');
+});
+
+test('wizard: demo selection uses demo identity and skips custom-domain choices', async () => {
+  const root = fakeLibrary();
+  const io = createScriptedIo([
+    '2', 'Showcase Dental', 'showcase-dental', '', '3', '1',
+    '+60123456789', 'demo@example.my', 'Kuala Lumpur', '', '', '', '', '', '', '', '',
+  ]);
+  const out = await wizard({}, env, { io, templatesRoot: root });
+  assert.match(io.text, /\[2\] Demo Website/);
+  assert.match(io.text, /Demo Information/);
+  assert.match(io.text, /Demo slug/);
+  assert.match(io.text, /Demo Domain: showcase-dental\.mybizgate\.com/);
+  assert.doesNotMatch(io.text, /Domain Type\n/);
+  assert.equal(out.projectType, 'demo');
+  assert.equal(out.domainType, 'subdomain');
 });
 
 test('slug suggestion is kebab-case and within limits', () => {
@@ -316,6 +336,13 @@ test('CLI mode: the documented non-interactive command still works as a dry run 
   const blank = await execFileAsync(bin, ['--name', 'Blank Co', '--slug', 'blank-cli-zz', '--template', 'blank', '--domain-type', 'subdomain', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
   assert.match(blank.stdout, /\[ OK \] Blank starter \(built-in\)/);
   assert.doesNotMatch(blank.stderr, /placeholder/);
+  const demo = await execFileAsync(bin, ['--name', 'Demo Co', '--slug', 'demo-cli-zz', '--project-type', 'demo', '--template', 'blank', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
+  assert.match(demo.stdout, /NEW DEMO SUMMARY/);
+  assert.match(demo.stdout, /Project Type     : Demo Website/);
+  assert.match(demo.stdout, /GitHub Repo      : mybizgate\/demo-demo-cli-zz/);
+  assert.match(demo.stdout, /Hosting Directory: public_html\/demo\/demo-cli-zz\//);
+  assert.match(demo.stdout, /\[PLAN\] Create demo\/demo-demo-cli-zz\//);
+  assert.equal(fs.existsSync(naming.demoDir('demo-cli-zz')), false);
   const legacy = await execFileAsync(bin, ['--name', 'Legacy Co', '--slug', 'legacy-cli-zz', '--template', 'petgate', '--domain-type', 'subdomain', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
   assert.match(legacy.stderr, /deprecated/);
 });
@@ -326,7 +353,7 @@ test('CLI mode: --apply with a placeholder template exits non-zero before creati
   const slug = 'placeholder-cli-zz';
   await assert.rejects(execFileAsync(bin, ['--name', 'P Co', '--slug', slug, '--template', 'beauty/elegant-01', '--domain-type', 'subdomain', '--mock', '--apply', '--yes'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() }), (err) => {
     assert.equal(err.code, 1);
-    assert.match(err.stderr, /\[FAIL\] Selected template is currently a placeholder template\.\n\[FAIL\] Client website source cannot be generated until the template is populated\./);
+    assert.match(err.stderr, /\[FAIL\] Selected template is currently a placeholder template\.\n\[FAIL\] Website source cannot be generated until the template is populated\./);
     assert.doesNotMatch(err.stderr, /at .*\.mjs:\d+/, 'no stack trace for a validation problem');
     return true;
   });
@@ -335,7 +362,7 @@ test('CLI mode: --apply with a placeholder template exits non-zero before creati
   await assert.rejects(execFileAsync(bin, ['--name', 'X', '--slug', 'x-zz', '--template', 'pet-boarding/nope', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() }), (err) => /\[FAIL\] Unknown template "pet-boarding\/nope"/.test(err.stderr) && /\[INFO\] Templates for pet-boarding: pet-boarding\/modern-01/.test(err.stdout));
   await assert.rejects(execFileAsync(bin, ['--name', 'X', '--slug', 'x-zz', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() }), (err) => /--template is required/.test(err.stderr));
   // No --name and no terminal: interactive mode cannot start, and says how to use CLI mode instead.
-  await assert.rejects(execFileAsync(bin, ['--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() }), (err) => /no interactive terminal/.test(err.stderr) && /--name, --slug, --template and --domain-type/.test(err.stdout));
+  await assert.rejects(execFileAsync(bin, ['--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() }), (err) => /no interactive terminal/.test(err.stderr) && /--name, --slug, --template and optionally --project-type/.test(err.stdout));
 });
 
 test('CLI: "mybizgate templates" lists the library from the filesystem', async () => {

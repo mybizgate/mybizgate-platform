@@ -10,7 +10,7 @@ template:
   version: null                # copied from the template's template.yml when it has one
   # Older configs use "type: petgate" (a demo name); that form is still accepted.
 
-platform_ref: v1.2.0       # MyBizGate platform release this site's workflow is pinned to
+platform_ref: v1.3.0       # MyBizGate platform release this site's workflow is pinned to
                            # (change with: mybizgate platform-ref <slug> --set vX.Y.Z --apply)
 
 domain:
@@ -37,16 +37,16 @@ business:                  # collected by the wizard; fills the template tokens 
   # tiktok: "@pawhaven"
 
 hosting:
-  deploy_dir: public_html/clients/pawhaven/   # clients: public_html/clients/<slug>/ only
+  deploy_dir: public_html/clients/pawhaven/   # client: public_html/clients/<slug>/; generated demo: public_html/demo/<slug>/
   ftp_account: dedicated   # dedicated (restricted FTP user) | shared
 
 site:
-  kind: client             # client | demo | corporate
+  kind: client             # client | demo | corporate (the wizard offers client or demo)
   environment: production  # production | staging
   production_url: https://pawhaven.mybizgate.com
   identity: Paw Haven Cat Hotel   # text expected on the homepage during health checks
 
-# Local machine paths (e.g. the client photos folder given to the wizard) are NOT stored here.
+# Local machine paths (e.g. the project photos folder given to the wizard) are NOT stored here.
 # They live in .mybizgate.local.yml next to this file, which is gitignored and never built or deployed.
 
 build:
@@ -65,5 +65,5 @@ qa:
   screenshots: false       # desktop-home.png / mobile-home.png artifacts
 
 github:
-  repo: client-pawhaven
-  visibility: private
+  repo: client-pawhaven    # generated demos use demo-<slug>
+  visibility: private      # generated demos default to public

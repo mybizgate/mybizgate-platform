@@ -10,7 +10,7 @@ on:
   workflow_call:
     inputs:
       deploy_dir:
-        description: Hosting deployment directory (e.g. public_html/clients/<slug>/). Falls back to site.config.yml.
+        description: Hosting deployment directory (e.g. public_html/clients/<slug>/ or public_html/demo/<slug>/). Falls back to site.config.yml.
         type: string
         required: false
         default: ''

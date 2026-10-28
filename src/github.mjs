@@ -53,6 +53,12 @@ export class GitHubProvider {
     return JSON.parse(r.stdout);
   }
 
+  async refExists(repo, ref) {
+    const encoded = encodeURIComponent(String(ref));
+    const r = await this.gh(['api', `repos/${this.fullName(repo)}/commits/${encoded}`], { allowFailure: true });
+    return r.code === 0;
+  }
+
   async createRepo({ name, visibility = 'private', description = '' }) {
     await this.gh(['repo', 'create', this.fullName(name), `--${visibility}`, '--description', description || `MyBizGate site ${name}`]);
     return this.repoExists(name);
@@ -120,6 +126,7 @@ export class MockGitHubProvider {
   async authStatus() { return { ok: true, login: this.state.login, scopes: 'repo, workflow' }; }
   async requireAuth() { return this.authStatus(); }
   async repoExists(repo) { const n = repo.replace(/^.*\//, ''); return this.state.repos.get(n) || null; }
+  async refExists() { return true; }
   async createRepo({ name, visibility = 'private' }) { this.state.calls.push(['createRepo', name, visibility]); const r = { name, visibility: visibility.toUpperCase(), variables: {}, secrets: new Set(), url: `https://github.com/mybizgate/${name}` }; this.state.repos.set(name, r); return r; }
   async setDefaultBranch(repo, branch) { this.state.calls.push(['setDefaultBranch', repo, branch]); }
   async listVariables(repo) { const r = this.state.repos.get(repo.replace(/^.*\//, '')); return r ? Object.entries(r.variables).map(([name, value]) => ({ name, value })) : []; }

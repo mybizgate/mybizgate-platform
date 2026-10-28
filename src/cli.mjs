@@ -32,9 +32,10 @@ Commands:
   build <site> [--out dir] [--version id] [--staging] [--report file]
                                  Build an optimised dist/ for a site directory, slug or site name
   qa <dist-dir>                  Validate a built dist/ directory
-  new-client [options]           Provision a new client. Interactive wizard when no --name is given
+  new-client [options]           Provision a client or demo website. Interactive wizard when no --name is given
                                  (dry run unless --apply; the wizard asks for the mode).
-      --name "Business" --slug slug --template <business-type>/<template> --domain-type subdomain|custom
+      --name "Business" --slug slug --template <business-type>/<template> [--project-type client|demo]
+      [--domain-type subdomain|custom]
       [--domain example.com.my] [--dns-mode awedns|external] [--visibility private|public]
       [--whatsapp +60123456789] [--email x@y.com] [--address "..."] [--phone ...] [--opening-hours "..."]
       [--facebook url|handle] [--instagram url|handle] [--tiktok url|handle] [--images /path/to/photos]
@@ -60,9 +61,9 @@ Commands:
   platform-ref <site|slug> [--set vX.Y.Z] [--apply]
                                  Show the platform release a site is pinned to; --set rewrites the caller
                                  workflow and site.config.yml and commits on main (controlled upgrade)
-  version                        Print the platform version and the release ref new clients are pinned to
+  version                        Print the platform version and the release ref new projects are pinned to
 
-New client workflows are pinned to the current platform release (${PLATFORM_RELEASE_REF}); existing clients are never
+New project workflows are pinned to the current platform release (${PLATFORM_RELEASE_REF}); existing projects are never
 upgraded automatically. Override the default with MYBIZGATE_PLATFORM_REF or --platform-ref.
 
 All commands that change GitHub, cPanel, Git remotes or production are DRY RUN unless --apply is given.
@@ -259,7 +260,7 @@ async function cmdNewClient(opts, env) {
   const { cpanel, github } = makeProviders(opts, env);
   const str = (v) => (typeof v === 'string' ? v : undefined);
   let input = {
-    name: str(opts.name), slug: str(opts.slug), template: str(opts.template), domainType: str(opts.domainType), domain: str(opts.domain), dnsMode: str(opts.dnsMode),
+    name: str(opts.name), slug: str(opts.slug), projectType: str(opts.projectType), template: str(opts.template), domainType: str(opts.domainType), domain: str(opts.domain), dnsMode: str(opts.dnsMode),
     visibility: str(opts.visibility), ftpAccount: str(opts.ftpAccount), dnsWaitMinutes: opts.dnsWait,
     whatsapp: str(opts.whatsapp), email: str(opts.email), address: str(opts.address), phone: str(opts.phone), openingHours: str(opts.openingHours),
     facebook: str(opts.facebook), instagram: str(opts.instagram), tiktok: str(opts.tiktok), images: str(opts.images),
@@ -270,11 +271,11 @@ async function cmdNewClient(opts, env) {
   let interactive = false;
   if (!resume && !input.name) {
     // Interactive mode: the wizard collects everything (and the mode) from the terminal.
-    if (!process.stdin.isTTY) throw new PlatformError('No --name given and no interactive terminal available.', { hint: 'Pass --name, --slug, --template and --domain-type for non-interactive use (see: mybizgate help).' });
+    if (!process.stdin.isTTY) throw new PlatformError('No --name given and no interactive terminal available.', { hint: 'Pass --name, --slug, --template and optionally --project-type for non-interactive use (see: mybizgate help).' });
     input = await wizard(input, env);
     interactive = true;
   }
-  if (!resume && !input.slug) throw new PlatformError('--slug is required.', { hint: 'Example: --name "Paw Haven Cat Hotel" --slug pawhaven --template pet-boarding/modern-01 --domain-type subdomain' });
+  if (!resume && !input.slug) throw new PlatformError('--slug is required.', { hint: 'Example: --name "Paw Haven Cat Hotel" --slug pawhaven --template pet-boarding/modern-01 --project-type client --domain-type subdomain' });
   if (!resume && !interactive && !input.template) throw new PlatformError('--template is required.', { hint: 'Run "mybizgate templates" to list the template library, or use --template blank.' });
   const apply = Boolean(opts.apply) || input.apply === true;
   const r = await newClient(input, { env, cpanel, github, apply, resume, yes: Boolean(opts.yes), requireContact: interactive });
@@ -385,7 +386,7 @@ async function cmdDnsInstructions(opts, env) {
 // ---------------------------------------------------------------------------
 // migrate-existing
 // ---------------------------------------------------------------------------
-const PROTECTED_PUBLIC_HTML = ['.well-known', 'cgi-bin', 'site-petgate', 'site-autogate', 'site-beautygate', 'site-dentalgate', 'site-supplygate', 'clients'];
+const PROTECTED_PUBLIC_HTML = ['.well-known', 'cgi-bin', 'site-petgate', 'site-autogate', 'site-beautygate', 'site-dentalgate', 'site-supplygate', 'clients', 'demo'];
 
 async function cmdMigrateExisting(opts, env) {
   const siteDir = resolveSiteDir(opts._[0]);
@@ -420,7 +421,7 @@ async function cmdMigrateExisting(opts, env) {
 
   // 2. Config
   const cfg = validateSiteConfig({
-    ...buildSiteConfig({ name, slug, template: base === CORPORATE_REPO ? 'blank' : base, kind, env }),
+    ...buildSiteConfig({ name, slug, template: base === CORPORATE_REPO ? 'blank' : base, kind, legacyDemo: kind === 'demo', env }),
     github: { repo: repoName, visibility: 'public' },
     site: { kind, environment: 'production', production_url: kind === 'corporate' ? `https://${env.baseDomain}` : `https://${slug}.${env.baseDomain}`, identity },
   }, { repo: repoName });

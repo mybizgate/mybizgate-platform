@@ -32,7 +32,7 @@ const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 // Files that may sit in a template directory without counting as website source.
 const NON_SOURCE_FILES = new Set(['.gitkeep', TEMPLATE_METADATA_FILE, 'README.md', 'README.txt', 'LICENSE', '.DS_Store']);
 const NON_SOURCE_PREFIXES = ['preview.'];
-// Never copied into a client project.
+// Never copied into a generated project.
 export const TEMPLATE_COPY_EXCLUDES = ['.gitkeep', TEMPLATE_METADATA_FILE, 'README.md', 'README.txt', 'LICENSE', 'preview.*', '.git', 'node_modules', 'dist', '.DS_Store', 'site.config.yml'];
 
 export function templatesDir(env = process.env) {
@@ -220,5 +220,5 @@ export function templateStatusText(t) {
 export const PLACEHOLDER_WARNING = (ref) => `Template ${ref} currently contains no website source files.`;
 export const PLACEHOLDER_STOP_LINES = [
   'Selected template is currently a placeholder template.',
-  'Client website source cannot be generated until the template is populated.',
+  'Website source cannot be generated until the template is populated.',
 ];

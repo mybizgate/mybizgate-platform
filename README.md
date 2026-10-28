@@ -6,11 +6,12 @@ Provisioning, build, deployment and client-onboarding tooling for MyBizGate stat
 cd /home/jul/Workspace/mybizgate
 ./platform/bin/mybizgate doctor          # check tools, auth, cPanel, DNS, AutoSSL
 ./platform/bin/mybizgate env             # show which env variables are set (names only)
-./platform/bin/new-client.sh             # interactive wizard: MyBizgate - Multi Tenancy SaaS Wizard (asks Dry Run / Apply)
+./platform/bin/new-client.sh             # interactive wizard: choose Client or Demo, then Dry Run / Apply
 ./platform/bin/new-client.sh --name "Paw Haven Cat Hotel" --slug pawhaven --template pet-boarding/modern-01 --domain-type subdomain --apply
+./platform/bin/new-client.sh --name "Paw Haven Demo" --slug pawhaven-demo --project-type demo --template pet-boarding/modern-01 --apply
 ./platform/bin/mybizgate templates       # list the template library (templates/<business-type>/<template>/)
 ./platform/bin/mybizgate render-template pet-boarding/modern-01 --out /tmp/preview --name "Paw Haven Cat Hotel" --whatsapp +60123456789 --address "Kuala Lumpur" --build
-./platform/bin/mybizgate platform-ref pawhaven --set v1.2.0   # pin/upgrade a client to a platform release (dry run until --apply)
+./platform/bin/mybizgate platform-ref pawhaven --set v1.3.0   # pin/upgrade a client to a platform release (dry run until --apply)
 ./platform/bin/mybizgate build petgate   # optimised dist/ for any site
 ./platform/bin/site-status.sh pawhaven
 ./platform/bin/rollback.sh pawhaven      # roll deploy back to the previous prod-* tag
@@ -73,6 +74,7 @@ The reusable website products live outside this repository, at the workspace lev
 ├── platform/      automation engine (this repository)
 ├── templates/     reusable website templates: templates/<business-type>/<template>/
 ├── clients/       generated client projects (one Git repository each)
+├── demo/          generated demo projects (demo-<slug>, one Git repository each)
 ├── petgate/ ...   public demos / showcases (not templates)
 └── mybizgate-site/
 ```
@@ -89,10 +91,10 @@ before any GitHub/cPanel resource is created. See `docs/NEW_CLIENT.md`.
 
 - Workspace root is not Git; every website and this platform are independent repositories.
 - `main` = development, `deploy` = production. A push to `deploy` builds `dist/` and deploys it.
-- Client workflows are pinned to a platform release (`@v1.2.0`), never to `main`; upgrade per client with `mybizgate platform-ref`.
-- Local machine paths (client photo folders) live in `.mybizgate.local.yml` (gitignored), never in `site.config.yml`.
+- Generated project workflows are pinned to a platform release (`@v1.3.0`), never to `main`; upgrade each project with `mybizgate platform-ref`.
+- Local machine paths (project photo folders) live in `.mybizgate.local.yml` (gitignored), never in `site.config.yml`.
 - Source stays readable; only `dist/` is minified/WebP-converted and it is never committed.
-- Only `mybizgate-site` may deploy to `public_html/`; demos use `public_html/site-<slug>/`; clients use `public_html/clients/<slug>/`.
+- Only `mybizgate-site` may deploy to `public_html/`. Generated demos use `public_html/demo/<slug>/`; clients use `public_html/clients/<slug>/`; legacy Gate demos retain `public_html/site-<slug>/`.
 - Secrets live in the workspace root `.env` (gitignored, loaded automatically), the shell environment and GitHub Actions secrets; never in committed files.
 
 See `docs/` for details.

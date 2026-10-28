@@ -7,14 +7,19 @@
 ├── platform/                          this repository: tooling only, no secrets
 ├── templates/<business-type>/<tpl>/   template library (reusable website products; discovered at runtime)
 ├── clients/client-<slug>/             one Git repository per real client
+├── demo/demo-<slug>/                  one Git repository per generated demo
 ├── mybizgate-site/                    corporate website  -> public_html/
-└── petgate|autogate|...               demo/products      -> public_html/site-<slug>/
+└── petgate|autogate|...               legacy Gate demos  -> public_html/site-<slug>/
 ```
 
 The **slug** is the permanent identity of a client. Repository (`client-<slug>`), local folder
 (`clients/client-<slug>`), hosting directory (`public_html/clients/<slug>/`), FTP account
 (`deploy-<slug>@mybizgate.com`) and staging host (`stg-<slug>.mybizgate.com`) derive from it.
 Changing the domain later never changes any of those.
+
+Generated demos derive repository `demo-<slug>`, local folder `demo/demo-<slug>` and hosting directory
+`public_html/demo/<slug>/` from the same slug. Legacy Gate demo repositories keep their existing `site-<slug>`
+repository and `public_html/site-<slug>/` deployment conventions.
 
 ## Configuration
 
@@ -27,7 +32,8 @@ template identity (`template.id` = `<business-type>/<template>`, `template.versi
 | site.kind | allowed deploy_dir | repository |
 | --- | --- | --- |
 | corporate | `public_html/` | only `mybizgate-site` |
-| demo | `public_html/site-<slug>/` | `site-<slug>` |
+| demo (generated) | `public_html/demo/<slug>/` | `demo-<slug>` |
+| demo (legacy Gate) | `public_html/site-<slug>/` | `site-<slug>` |
 | client | `public_html/clients/<slug>/` | `client-<slug>` |
 
 Anything else (root, `..`, empty, other folders) is refused before FTP runs.
@@ -40,7 +46,7 @@ Templates in `templates/<business-type>/<template>/` carry `{{TOKEN}}` placehold
 `{{#KEY}}...{{/KEY}}` conditional blocks). `template.yml` declares `required_content`, `defaults` (may reference
 tokens) and `residue` (source-design strings that must not survive). Provisioning order, both modes:
 
-template selection -> client information -> generate client source -> personalise -> residue validation
+project type -> template selection -> business information -> generate project source -> personalise -> residue validation
 -> local production build -> local QA -> GitHub / cPanel / FTP -> GitHub deployment -> production health check.
 
 Dry run performs the generation and residue scan in a temporary directory; Apply stops with
@@ -69,8 +75,8 @@ Dry run performs the generation and residue scan in a temporary directory; Apply
 
 Site repositories contain only the small caller workflow (`templates/static-site/.github/workflows/deploy.yml`).
 It calls `mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@<platform_ref>` and passes the same
-`platform_ref` to the build-engine checkout. New clients are pinned to the platform release they were created with
-(`v1.2.0`, recorded as `platform_ref` in `site.config.yml`); nothing on platform `main` reaches a client until
+`platform_ref` to the build-engine checkout. New projects are pinned to the platform release they were created with
+(`v1.3.0`, recorded as `platform_ref` in `site.config.yml`); nothing on platform `main` reaches a project until
 `mybizgate platform-ref <slug> --set vX.Y.Z --apply` is run for it. The reusable workflow:
 
 checkout site → checkout platform → Node 22 → `npm ci` (locked) → `resolve-target` (validates `site.config.yml`
@@ -78,8 +84,10 @@ and the `DEPLOY_DIR`/`SITE_DOMAIN`/`SITE_NAME` variables, refuses unsafe paths) 
 optional Lighthouse / Playwright / screenshots (artifacts) → FTPS deploy of `./dist/` only
 (`dangerous-clean-slate` is never enabled) → health check (HTTPS, status, identity, CSS, JS, image, build version) → `prod-YYYYMMDD-HHMM-<sha>` tag.
 
-Clients get a dedicated FTP account whose home is `public_html/clients/<slug>/`; the FTP `server-dir` is then `./`,
-so the account itself cannot write anywhere else. Demo/corporate sites use the shared deploy credential with explicit `server-dir`.
+Generated clients and demos get a dedicated FTP account rooted at their own deployment directory; the FTP `server-dir`
+is then `./`, so the account cannot write anywhere else. Legacy Gate demos and the corporate site use the shared deploy
+credential with an explicit `server-dir`.
+Corporate deployment protection treats both `public_html/clients/` and `public_html/demo/` as protected directories.
 
 ## Providers
 

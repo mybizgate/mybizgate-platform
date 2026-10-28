@@ -17,10 +17,13 @@ test('normalizeInput validates and fills defaults', () => {
   const i = normalizeInput({ name: ' Paw Haven ', slug: 'pawhaven', template: 'petgate' }, env);
   assert.equal(i.name, 'Paw Haven');
   assert.equal(i.domainType, 'subdomain');
+  assert.equal(i.projectType, 'client');
   assert.equal(i.visibility, 'private');
   assert.equal(i.ftpAccount, 'dedicated');
   assert.throws(() => normalizeInput({ name: 'X', slug: 'bad slug' }, env), /slug/i);
+  assert.throws(() => normalizeInput({ name: 'X', slug: 'x', projectType: 'campaign' }, env), /project type/i);
   assert.throws(() => normalizeInput({ name: 'X', slug: 'x', domainType: 'custom' }, env), /Custom domain/);
+  assert.throws(() => normalizeInput({ name: 'X', slug: 'x', projectType: 'demo', domainType: 'custom', domain: 'x.my' }, env), /subdomain only/);
   assert.throws(() => normalizeInput({ name: 'X', slug: 'x', template: 'wordpress' }, env), /template/i);
 });
 
@@ -33,6 +36,9 @@ test('plan lists hosting steps per domain mode', () => {
   const ext = validateSiteConfig(buildSiteConfig({ name: 'A', slug: 'aaa', template: 'blank', domainType: 'custom', customDomain: 'aaa.com.my', dnsMode: 'external', env }));
   assert.ok(hostingPlan(ext, env).some((s) => s.id === 'external-dns'));
   assert.ok(planFor(sub, env).length >= 8);
+  const demo = validateSiteConfig(buildSiteConfig({ name: 'Demo A', slug: 'demo-a', template: 'blank', kind: 'demo', visibility: 'public', env }));
+  assert.deepEqual(hostingPlan(demo, env).map((s) => s.id), ['subdomain', 'ftp', 'autossl']);
+  assert.match(planFor(demo, env)[0].text, /demo\/demo-demo-a\//);
 });
 
 test('dry run never calls mutating provider methods', async () => {
@@ -43,6 +49,37 @@ test('dry run never calls mutating provider methods', async () => {
   assert.deepEqual(cpanel.state.calls, []);
   assert.deepEqual(github.state.calls, []);
   assert.equal(fs.existsSync(naming.clientDir('dry-run-co')), false);
+});
+
+test('demo dry run uses isolated demo naming and never mutates providers', async () => {
+  const cpanel = new MockCPanelProvider();
+  const github = new MockGitHubProvider();
+  const slug = 'dry-demo-co';
+  const r = await newClient({ name: 'Dry Demo Co', slug, projectType: 'demo', template: 'blank' }, { env, cpanel, github, apply: false });
+  assert.equal(r.dryRun, true);
+  assert.equal(r.cfg.site.kind, 'demo');
+  assert.equal(r.cfg.github.repo, 'demo-dry-demo-co');
+  assert.equal(r.cfg.github.visibility, 'public');
+  assert.equal(r.cfg.hosting.deploy_dir, 'public_html/demo/dry-demo-co/');
+  assert.equal(r.cfg.hosting.ftp_account, 'dedicated');
+  assert.match(r.clientDir, /\/demo\/demo-dry-demo-co$/);
+  assert.deepEqual(cpanel.state.calls, []);
+  assert.deepEqual(github.state.calls, []);
+  assert.equal(fs.existsSync(naming.demoDir(slug)), false);
+});
+
+test('apply stops before creating anything when the pinned platform release is unpublished', async () => {
+  const cpanel = new MockCPanelProvider();
+  const github = new MockGitHubProvider();
+  github.refExists = async () => false;
+  const slug = 'missing-platform-ref';
+  await assert.rejects(
+    newClient({ name: 'Missing Platform Ref', slug, template: 'blank' }, { env, cpanel, github, apply: true, yes: true }),
+    (err) => err.code === 'PLATFORM_REF_MISSING' && /not available on GitHub/.test(err.message),
+  );
+  assert.deepEqual(cpanel.state.calls, []);
+  assert.deepEqual(github.state.calls, []);
+  assert.equal(fs.existsSync(naming.clientDir(slug)), false);
 });
 
 test('hosting steps are idempotent and honour dry-run', async () => {

@@ -7,7 +7,7 @@ export function hostingPlan(cfg, env = loadEnv()) {
   const steps = [];
   const slug = cfg.client.slug;
   const dir = cfg.hosting.deploy_dir;
-  if (cfg.site.kind !== 'client') {
+  if (cfg.site.kind === 'corporate') {
     steps.push({ id: 'hosting-existing', text: `Use existing hosting for ${cfg.domain.primary} -> ${dir}` });
     return steps;
   }

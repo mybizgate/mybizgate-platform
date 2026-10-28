@@ -9,9 +9,10 @@ import { PlatformError, exists } from './utils.mjs';
 export const PLATFORM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const WORKSPACE_DIR = path.resolve(PLATFORM_DIR, '..');
 export const CLIENTS_DIR = path.join(WORKSPACE_DIR, 'clients');
+export const DEMOS_DIR = path.join(WORKSPACE_DIR, 'demo');
 
-// The platform's own version (package.json). New client workflows are pinned to the matching
-// release tag (vX.Y.Z) so a change on platform main never reaches a client until it is upgraded.
+// The platform's own version (package.json). New project workflows are pinned to the matching
+// release tag (vX.Y.Z) so a change on platform main never reaches a project until it is upgraded.
 export const PLATFORM_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(PLATFORM_DIR, 'package.json'), 'utf8')).version || '0.0.0'; } catch { return '0.0.0'; } })();
 export const PLATFORM_RELEASE_REF = `v${PLATFORM_VERSION}`;
 export const PLATFORM_REF_RE = /^(?:v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?|main|[0-9a-f]{7,40})$/;
@@ -27,7 +28,7 @@ export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 export const RESERVED_SLUGS = new Set([
   'www', 'mail', 'ftp', 'cpanel', 'webmail', 'webdisk', 'whm', 'ns1', 'ns2', 'api', 'admin', 'autodiscover',
-  'autoconfig', 'cpcontacts', 'cpcalendars', 'localhost', 'mybizgate', 'site', 'clients', 'client', 'stg', 'staging',
+  'autoconfig', 'cpcontacts', 'cpcalendars', 'localhost', 'mybizgate', 'site', 'clients', 'client', 'demo', 'stg', 'staging',
   'petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate',
 ]);
 
@@ -39,6 +40,7 @@ export const TEMPLATE_ID_RE = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*)(?:\/[a-z0-9]+(?:-[a
 export const DOMAIN_TYPES = ['subdomain', 'custom'];
 export const DNS_MODES = ['awedns', 'external'];
 export const SITE_KINDS = ['client', 'demo', 'corporate'];
+export const PROJECT_TYPES = ['client', 'demo'];
 export const VISIBILITIES = ['private', 'public'];
 
 export const CORPORATE_REPO = 'mybizgate-site';
@@ -258,11 +260,17 @@ export function validateVisibility(v) {
   return v;
 }
 
+export function validateProjectType(v) {
+  if (!PROJECT_TYPES.includes(v)) throw new PlatformError(`Unknown project type "${v}". Choose one of: ${PROJECT_TYPES.join(', ')}.`, { code: 'INVALID_PROJECT_TYPE' });
+  return v;
+}
+
 // ---------------------------------------------------------------------------
 // Deployment directory rules (the central safety rule of the platform)
 // ---------------------------------------------------------------------------
 const CLIENT_DIR_RE = /^public_html\/clients\/([a-z0-9]+(?:-[a-z0-9]+)*)\/$/;
-const DEMO_DIR_RE = /^public_html\/site-([a-z0-9]+(?:-[a-z0-9]+)*)\/$/;
+const DEMO_DIR_RE = /^public_html\/demo\/([a-z0-9]+(?:-[a-z0-9]+)*)\/$/;
+const LEGACY_DEMO_DIR_RE = /^public_html\/site-([a-z0-9]+(?:-[a-z0-9]+)*)\/$/;
 
 export function normalizeDeployDir(dir) {
   if (typeof dir !== 'string') return '';
@@ -301,8 +309,8 @@ export function validateDeployDir(dir, { kind, slug, repo } = {}) {
     throw new PlatformError(`Refusing to deploy a ${kind} site to public_html/ (that is the corporate website root).`, { code: 'UNSAFE_DEPLOY_DIR' });
   }
   if (kind === 'demo') {
-    const m = DEMO_DIR_RE.exec(d);
-    if (!m) throw new PlatformError(`Demo sites must deploy to public_html/site-<slug>/ (got "${dir}").`, { code: 'UNSAFE_DEPLOY_DIR' });
+    const m = DEMO_DIR_RE.exec(d) || LEGACY_DEMO_DIR_RE.exec(d);
+    if (!m) throw new PlatformError(`Demo sites must deploy to public_html/demo/<slug>/ (legacy Gate demos may use public_html/site-<slug>/; got "${dir}").`, { code: 'UNSAFE_DEPLOY_DIR' });
     if (slug && m[1] !== slug) throw new PlatformError(`Demo deploy dir "${dir}" does not match slug "${slug}".`, { code: 'UNSAFE_DEPLOY_DIR' });
     return d;
   }
@@ -320,7 +328,14 @@ export const naming = {
   clientDirName: (slug) => `client-${slug}`,
   clientDir: (slug) => path.join(CLIENTS_DIR, `client-${slug}`),
   deployDir: (slug) => `public_html/clients/${slug}/`,
-  demoDeployDir: (slug) => `public_html/site-${slug}/`,
+  demoRepoName: (slug) => `demo-${slug}`,
+  demoDirName: (slug) => `demo-${slug}`,
+  demoDir: (slug) => path.join(DEMOS_DIR, `demo-${slug}`),
+  demoDeployDir: (slug) => `public_html/demo/${slug}/`,
+  legacyDemoRepoName: (slug) => `site-${slug}`,
+  legacyDemoDeployDir: (slug) => `public_html/site-${slug}/`,
+  projectRepoName: (kind, slug) => kind === 'demo' ? `demo-${slug}` : `client-${slug}`,
+  projectDir: (kind, slug) => kind === 'demo' ? path.join(DEMOS_DIR, `demo-${slug}`) : path.join(CLIENTS_DIR, `client-${slug}`),
   subdomainHost: (slug, env = loadEnv()) => `${slug}.${env.baseDomain}`,
   stagingHost: (slug, env = loadEnv()) => `stg-${slug}.${env.baseDomain}`,
   ftpUser: (slug) => `deploy-${slug}`,
@@ -346,7 +361,7 @@ export function defaultBuildConfig() {
   };
 }
 
-export function buildSiteConfig({ name, slug, template, templateVersion = null, business, platformRef, kind = 'client', domainType = 'subdomain', customDomain, dnsMode, visibility = 'private', ftpAccount = 'dedicated', env = loadEnv() }) {
+export function buildSiteConfig({ name, slug, template, templateVersion = null, business, platformRef, kind = 'client', legacyDemo = false, domainType = 'subdomain', customDomain, dnsMode, visibility = 'private', ftpAccount = 'dedicated', env = loadEnv() }) {
   const cfg = {
     client: { name, slug },
     template: { id: validateTemplateId(template), version: templateVersion || null },
@@ -369,10 +384,10 @@ export function buildSiteConfig({ name, slug, template, templateVersion = null, 
       cfg.domain = { type: 'custom', primary: customDomain, staging: naming.stagingHost(slug, env), dns_mode: dnsMode || 'external' };
     }
   } else if (kind === 'demo') {
-    cfg.hosting.deploy_dir = naming.demoDeployDir(slug);
-    cfg.hosting.ftp_account = 'shared';
+    cfg.hosting.deploy_dir = legacyDemo ? naming.legacyDemoDeployDir(slug) : naming.demoDeployDir(slug);
+    cfg.hosting.ftp_account = legacyDemo ? 'shared' : ftpAccount;
     cfg.domain = { type: 'subdomain', primary: naming.subdomainHost(slug, env) };
-    cfg.github.repo = `site-${slug}`;
+    cfg.github.repo = legacyDemo ? naming.legacyDemoRepoName(slug) : naming.demoRepoName(slug);
   } else {
     cfg.hosting.deploy_dir = 'public_html/';
     cfg.hosting.ftp_account = 'shared';
@@ -442,7 +457,7 @@ export function validateSiteConfig(data, { source = SITE_CONFIG_FILE, repo } = {
   }
   if (!cfg.hosting || typeof cfg.hosting !== 'object') fail('missing "hosting" section.');
   cfg.hosting.deploy_dir = validateDeployDir(cfg.hosting.deploy_dir, { kind: cfg.site.kind, slug: cfg.client.slug, repo });
-  cfg.hosting.ftp_account = cfg.hosting.ftp_account || (cfg.site.kind === 'client' ? 'dedicated' : 'shared');
+  cfg.hosting.ftp_account = cfg.hosting.ftp_account || ((cfg.site.kind === 'client' || (cfg.site.kind === 'demo' && cfg.hosting.deploy_dir.startsWith('public_html/demo/'))) ? 'dedicated' : 'shared');
   if (!['dedicated', 'shared'].includes(cfg.hosting.ftp_account)) fail('hosting.ftp_account must be "dedicated" or "shared".');
   cfg.site.production_url = cfg.site.production_url || naming.productionUrl(cfg.domain.primary);
   if (!/^https:\/\/[a-z0-9.-]+\/?$/.test(cfg.site.production_url)) fail('site.production_url must be an https:// origin.');
@@ -457,7 +472,11 @@ export function validateSiteConfig(data, { source = SITE_CONFIG_FILE, repo } = {
   cfg.qa = { lighthouse: false, browser_smoke: false, screenshots: false, ...(cfg.qa || {}) };
   cfg.github = cfg.github || {};
   if (!cfg.github.repo) {
-    cfg.github.repo = cfg.site.kind === 'client' ? naming.repoName(cfg.client.slug) : cfg.site.kind === 'demo' ? `site-${cfg.client.slug}` : CORPORATE_REPO;
+    cfg.github.repo = cfg.site.kind === 'client'
+      ? naming.repoName(cfg.client.slug)
+      : cfg.site.kind === 'demo'
+        ? (cfg.hosting.deploy_dir.startsWith('public_html/site-') ? naming.legacyDemoRepoName(cfg.client.slug) : naming.demoRepoName(cfg.client.slug))
+        : CORPORATE_REPO;
   }
   return cfg;
 }
@@ -492,6 +511,8 @@ export function resolveSiteDir(ref) {
     path.join(WORKSPACE_DIR, ref),
     path.join(CLIENTS_DIR, ref),
     path.join(CLIENTS_DIR, `client-${ref}`),
+    path.join(DEMOS_DIR, ref),
+    path.join(DEMOS_DIR, `demo-${ref}`),
   ];
   for (const c of candidates) {
     if (exists(path.join(c, 'index.html')) || exists(path.join(c, SITE_CONFIG_FILE))) return c;
@@ -502,6 +523,6 @@ export function resolveSiteDir(ref) {
 export function inferSiteKind(siteDir) {
   const base = path.basename(siteDir);
   if (base === CORPORATE_REPO) return 'corporate';
-  if (DEMO_SITES.includes(base)) return 'demo';
+  if (DEMO_SITES.includes(base) || base.startsWith('demo-') || path.dirname(siteDir) === DEMOS_DIR) return 'demo';
   return 'client';
 }

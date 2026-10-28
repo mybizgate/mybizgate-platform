@@ -27,12 +27,14 @@ test('domain validation', () => {
 test('deployment directory validation enforces the safety rules', () => {
   assert.equal(validateDeployDir('public_html/clients/pawhaven/', { kind: 'client', slug: 'pawhaven' }), 'public_html/clients/pawhaven/');
   assert.equal(validateDeployDir('public_html/clients/pawhaven', { kind: 'client', slug: 'pawhaven' }), 'public_html/clients/pawhaven/');
-  assert.equal(validateDeployDir('public_html/site-petgate/', { kind: 'demo', slug: 'petgate' }), 'public_html/site-petgate/');
+  assert.equal(validateDeployDir('public_html/demo/pawhaven/', { kind: 'demo', slug: 'pawhaven' }), 'public_html/demo/pawhaven/');
+  assert.equal(validateDeployDir('public_html/site-petgate/', { kind: 'demo', slug: 'petgate' }), 'public_html/site-petgate/', 'legacy Gate demo paths remain valid');
   assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'mybizgate-site' }), 'public_html/');
   for (const bad of ['', '/', '.', '..', 'public_html/', 'public_html/../x/', 'public_html/clients/../pawhaven/', 'public_html/clients/other/', 'public_html/site-petgate/', 'clients/pawhaven/', '/public_html/clients/pawhaven/', 'public_html/clients/paw haven/']) {
     assert.throws(() => validateDeployDir(bad, { kind: 'client', slug: 'pawhaven' }), `client should reject ${JSON.stringify(bad)}`);
   }
   assert.throws(() => validateDeployDir('public_html/', { kind: 'demo', slug: 'petgate' }), /corporate/);
+  assert.throws(() => validateDeployDir('public_html/demo/other/', { kind: 'demo', slug: 'pawhaven' }), /slug/);
   assert.throws(() => validateDeployDir('public_html/', { kind: 'corporate', repo: 'client-pawhaven' }), /Only mybizgate-site/);
   assert.throws(() => validateDeployDir('public_html/clients/x/', { kind: 'corporate', repo: 'mybizgate-site' }));
 });
@@ -42,6 +44,10 @@ test('naming conventions derive everything from the slug', () => {
   assert.equal(naming.clientDirName('pawhaven'), 'client-pawhaven');
   assert.match(naming.clientDir('pawhaven'), /\/clients\/client-pawhaven$/);
   assert.equal(naming.deployDir('pawhaven'), 'public_html/clients/pawhaven/');
+  assert.equal(naming.demoRepoName('pawhaven'), 'demo-pawhaven');
+  assert.match(naming.demoDir('pawhaven'), /\/demo\/demo-pawhaven$/);
+  assert.equal(naming.demoDeployDir('pawhaven'), 'public_html/demo/pawhaven/');
+  assert.equal(naming.projectRepoName('demo', 'pawhaven'), 'demo-pawhaven');
   assert.equal(naming.subdomainHost('pawhaven', env), 'pawhaven.mybizgate.com');
   assert.equal(naming.stagingHost('pawhaven', env), 'stg-pawhaven.mybizgate.com');
   assert.equal(naming.sshRemote('client-pawhaven', env), 'git@github-mybizgate:mybizgate/client-pawhaven.git');
@@ -82,9 +88,14 @@ test('config parsing rejects unsafe deploy directories and bad yaml', () => {
 });
 
 test('demo and corporate configs', () => {
-  const demo = validateSiteConfig(buildSiteConfig({ name: 'PetGate', slug: 'petgate', template: 'petgate', kind: 'demo', env }));
-  assert.equal(demo.hosting.deploy_dir, 'public_html/site-petgate/');
-  assert.equal(demo.github.repo, 'site-petgate');
+  const demo = validateSiteConfig(buildSiteConfig({ name: 'Paw Haven Demo', slug: 'pawhaven', template: 'petgate', kind: 'demo', visibility: 'public', env }));
+  assert.equal(demo.hosting.deploy_dir, 'public_html/demo/pawhaven/');
+  assert.equal(demo.github.repo, 'demo-pawhaven');
+  assert.equal(demo.github.visibility, 'public');
+  assert.equal(demo.hosting.ftp_account, 'dedicated');
+  const legacyDemo = validateSiteConfig(buildSiteConfig({ name: 'PetGate', slug: 'petgate', template: 'petgate', kind: 'demo', legacyDemo: true, env }));
+  assert.equal(legacyDemo.hosting.deploy_dir, 'public_html/site-petgate/');
+  assert.equal(legacyDemo.github.repo, 'site-petgate');
   const corp = validateSiteConfig(buildSiteConfig({ name: 'MyBizGate', slug: 'mybizgate', template: 'blank', kind: 'corporate', env }), { repo: 'mybizgate-site' });
   assert.equal(corp.hosting.deploy_dir, 'public_html/');
   assert.throws(() => validateSiteConfig(buildSiteConfig({ name: 'MyBizGate', slug: 'mybizgate', template: 'blank', kind: 'corporate', env }), { repo: 'client-evil' }));

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   renderText, buildContext, personalizeProject, scanResidue, residuePatternsFor, deriveShortName, deriveLocality, initialsOf, socialUrl, missingRequiredContent, assertNoResidue,
 } from '../src/personalize.mjs';
-import { resolveTemplate, discoverTemplates, templatesDir, TEMPLATE_STATUS } from '../src/templates.mjs';
+import { resolveTemplate, discoverTemplates, templatesDir } from '../src/templates.mjs';
 import {
   newClient, normalizeInput, generateClientProject, writeProjectFiles, renderCallerWorkflow, readPlatformRef, writeLocalConfig, readLocalConfig, LOCAL_CONFIG_FILE, clientSummary,
 } from '../src/provision.mjs';
@@ -281,12 +281,14 @@ test('dry run preflight passes for a well-personalised template and reports the 
 });
 
 test('placeholder templates are still blocked from Apply while being dry-runnable', async () => {
-  const root = REAL_TEMPLATES;
-  if (!fs.existsSync(path.join(root, 'pet-boarding', 'premium-01'))) return;
+  const root = miniLibrary();
+  const placeholder = path.join(root, 'pet-boarding', 'placeholder-01');
+  fs.mkdirSync(placeholder, { recursive: true });
+  fs.writeFileSync(path.join(placeholder, '.gitkeep'), '');
   const { cpanel, github } = providers();
-  const r = await newClient({ ...PAW, slug: 'ph-premium-pz', template: 'pet-boarding/premium-01' }, { env, cpanel, github, apply: false, templatesRoot: root });
+  const r = await newClient({ ...PAW, slug: 'ph-premium-pz', template: 'pet-boarding/placeholder-01' }, { env, cpanel, github, apply: false, templatesRoot: root });
   assert.equal(r.templateBlocked, true);
-  await assert.rejects(newClient({ ...PAW, slug: 'ph-premium-pz', template: 'pet-boarding/premium-01' }, { env, cpanel, github, apply: true, yes: true, templatesRoot: root }), (err) => err.code === 'TEMPLATE_PLACEHOLDER');
+  await assert.rejects(newClient({ ...PAW, slug: 'ph-premium-pz', template: 'pet-boarding/placeholder-01' }, { env, cpanel, github, apply: true, yes: true, templatesRoot: root }), (err) => err.code === 'TEMPLATE_PLACEHOLDER');
   assert.deepEqual(github.state.calls, []);
   assert.equal(fs.existsSync(naming.clientDir('ph-premium-pz')), false);
 });
@@ -294,12 +296,11 @@ test('placeholder templates are still blocked from Apply while being dry-runnabl
 // ---------------------------------------------------------------------------
 // The real template: pet-boarding/modern-01
 // ---------------------------------------------------------------------------
-test('Pet Boarding Modern 01 is discovered as the only ready template with its metadata', () => {
+test('Pet Boarding Modern 01 is discovered as a ready template with its metadata', () => {
   if (!hasRealTemplate) return;
   const list = discoverTemplates('pet-boarding', { root: REAL_TEMPLATES });
   const ready = list.filter((t) => t.usable);
-  assert.deepEqual(ready.map((t) => t.ref), ['pet-boarding/modern-01']);
-  assert.ok(list.filter((t) => t.status === TEMPLATE_STATUS.PLACEHOLDER).length >= 2, 'the other pet-boarding templates stay placeholders');
+  assert.ok(ready.some((t) => t.ref === 'pet-boarding/modern-01'));
   const t = resolveTemplate('pet-boarding/modern-01', { root: REAL_TEMPLATES });
   assert.equal(t.name, 'Modern Pet Boarding');
   assert.equal(t.version, '1.0.0');
@@ -312,8 +313,6 @@ test('Pet Boarding Modern 01 is discovered as the only ready template with its m
   assert.ok(t.metadata.defaults.seo_title.includes('{{BUSINESS_NAME}}'));
   assert.deepEqual(t.warnings, []);
   assert.ok(t.files >= 30, `template ships its images (${t.files} files)`);
-  // Every other library template remains a placeholder.
-  for (const cat of ['beauty', 'dental', 'automotive', 'supplier', 'general-business']) for (const x of discoverTemplates(cat, { root: REAL_TEMPLATES })) assert.equal(x.status, TEMPLATE_STATUS.PLACEHOLDER, x.ref);
 });
 
 test('the template source itself carries no PetGate identity, only tokens', () => {
