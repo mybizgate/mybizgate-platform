@@ -11,7 +11,7 @@ cd /home/jul/Workspace/mybizgate
 ./platform/bin/new-client.sh --name "Paw Haven Demo" --slug pawhaven-demo --project-type demo --template pet-boarding/modern-01 --apply
 ./platform/bin/mybizgate templates       # list the template library (templates/<business-type>/<template>/)
 ./platform/bin/mybizgate render-template pet-boarding/modern-01 --out /tmp/preview --name "Paw Haven Cat Hotel" --whatsapp +60123456789 --address "Kuala Lumpur" --build
-./platform/bin/mybizgate platform-ref pawhaven --set v1.3.0   # pin/upgrade a client to a platform release (dry run until --apply)
+./platform/bin/mybizgate platform-ref pawhaven --set v1.4.0   # pin/upgrade a client to a platform release (dry run until --apply)
 ./platform/bin/mybizgate build petgate   # optimised dist/ for any site
 ./platform/bin/site-status.sh pawhaven
 ./platform/bin/rollback.sh pawhaven      # roll deploy back to the previous prod-* tag
@@ -91,7 +91,7 @@ before any GitHub/cPanel resource is created. See `docs/NEW_CLIENT.md`.
 
 - Workspace root is not Git; every website and this platform are independent repositories.
 - `main` = development, `deploy` = production. A push to `deploy` builds `dist/` and deploys it.
-- Generated project workflows are pinned to a platform release (`@v1.3.0`), never to `main`; upgrade each project with `mybizgate platform-ref`.
+- Generated project workflows are pinned to a platform release (`@v1.4.0`), never to `main`; upgrade each project with `mybizgate platform-ref`.
 - Local machine paths (project photo folders) live in `.mybizgate.local.yml` (gitignored), never in `site.config.yml`.
 - Source stays readable; only `dist/` is minified/WebP-converted and it is never committed.
 - Only `mybizgate-site` may deploy to `public_html/`. Generated demos use `public_html/demo/<slug>/`; clients use `public_html/clients/<slug>/`; legacy Gate demos retain `public_html/site-<slug>/`.

@@ -58,19 +58,19 @@ jobs:
       PLATFORM_DIR: .mybizgate-platform
     steps:
       - name: Checkout site
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Obtain MyBizGate build engine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: mybizgate/mybizgate-platform
           ref: ${{ inputs.platform_ref }}
           path: .mybizgate-platform
 
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload QA artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: qa-${{ github.run_number }}
           if-no-files-found: ignore
