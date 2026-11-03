@@ -43,7 +43,7 @@ export const SITE_KINDS = ['client', 'demo', 'corporate'];
 export const PROJECT_TYPES = ['client', 'demo'];
 export const VISIBILITIES = ['private', 'public'];
 
-export const CORPORATE_REPO = 'mybizgate-site';
+export const CORPORATE_REPO = 'niagova-site';
 export const DEMO_SITES = ['petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate'];
 
 // ---------------------------------------------------------------------------
@@ -482,7 +482,7 @@ export function validateSiteConfig(data, { source = SITE_CONFIG_FILE, repo } = {
 }
 
 function validateSlugForConfig(slug) {
-  // Demo/corporate slugs are allowed to use reserved names (petgate, mybizgate).
+  // Demo/corporate slugs are allowed to use reserved names (petgate, mybizgate, niagova).
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new PlatformError(`client.slug "${slug}" is invalid.`, { code: 'INVALID_SLUG' });
   return slug;
 }

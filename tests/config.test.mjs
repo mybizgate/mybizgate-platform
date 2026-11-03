@@ -29,14 +29,14 @@ test('deployment directory validation enforces the safety rules', () => {
   assert.equal(validateDeployDir('public_html/clients/pawhaven', { kind: 'client', slug: 'pawhaven' }), 'public_html/clients/pawhaven/');
   assert.equal(validateDeployDir('public_html/demo/pawhaven/', { kind: 'demo', slug: 'pawhaven' }), 'public_html/demo/pawhaven/');
   assert.equal(validateDeployDir('public_html/site-petgate/', { kind: 'demo', slug: 'petgate' }), 'public_html/site-petgate/', 'legacy Gate demo paths remain valid');
-  assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'mybizgate-site' }), 'public_html/');
+  assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'niagova-site' }), 'public_html/');
   for (const bad of ['', '/', '.', '..', 'public_html/', 'public_html/../x/', 'public_html/clients/../pawhaven/', 'public_html/clients/other/', 'public_html/site-petgate/', 'clients/pawhaven/', '/public_html/clients/pawhaven/', 'public_html/clients/paw haven/']) {
     assert.throws(() => validateDeployDir(bad, { kind: 'client', slug: 'pawhaven' }), `client should reject ${JSON.stringify(bad)}`);
   }
   assert.throws(() => validateDeployDir('public_html/', { kind: 'demo', slug: 'petgate' }), /corporate/);
   assert.throws(() => validateDeployDir('public_html/demo/other/', { kind: 'demo', slug: 'pawhaven' }), /slug/);
-  assert.throws(() => validateDeployDir('public_html/', { kind: 'corporate', repo: 'client-pawhaven' }), /Only mybizgate-site/);
-  assert.throws(() => validateDeployDir('public_html/clients/x/', { kind: 'corporate', repo: 'mybizgate-site' }));
+  assert.throws(() => validateDeployDir('public_html/', { kind: 'corporate', repo: 'client-pawhaven' }), /Only niagova-site/);
+  assert.throws(() => validateDeployDir('public_html/clients/x/', { kind: 'corporate', repo: 'niagova-site' }));
 });
 
 test('naming conventions derive everything from the slug', () => {
@@ -96,7 +96,7 @@ test('demo and corporate configs', () => {
   const legacyDemo = validateSiteConfig(buildSiteConfig({ name: 'PetGate', slug: 'petgate', template: 'petgate', kind: 'demo', legacyDemo: true, env }));
   assert.equal(legacyDemo.hosting.deploy_dir, 'public_html/site-petgate/');
   assert.equal(legacyDemo.github.repo, 'site-petgate');
-  const corp = validateSiteConfig(buildSiteConfig({ name: 'MyBizGate', slug: 'mybizgate', template: 'blank', kind: 'corporate', env }), { repo: 'mybizgate-site' });
+  const corp = validateSiteConfig(buildSiteConfig({ name: 'Niagova', slug: 'niagova', template: 'blank', kind: 'corporate', env }), { repo: 'niagova-site' });
   assert.equal(corp.hosting.deploy_dir, 'public_html/');
   assert.throws(() => validateSiteConfig(buildSiteConfig({ name: 'MyBizGate', slug: 'mybizgate', template: 'blank', kind: 'corporate', env }), { repo: 'client-evil' }));
 });

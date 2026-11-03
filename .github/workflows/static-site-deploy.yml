@@ -170,7 +170,7 @@ jobs:
         run: |
           TAG="prod-$(date -u +%Y%m%d-%H%M)-${BUILD_VERSION::8}"
           git config user.name "mybizgate-deploy[bot]"
-          git config user.email "deploy@mybizgate.com"
+          git config user.email "deploy@niagova.com"
           git tag -a "$TAG" -m "Production deployment $TAG" "$BUILD_VERSION"
           git push origin "refs/tags/$TAG"
           echo "Tagged $TAG"
