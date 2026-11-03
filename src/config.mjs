@@ -44,6 +44,8 @@ export const PROJECT_TYPES = ['client', 'demo'];
 export const VISIBILITIES = ['private', 'public'];
 
 export const CORPORATE_REPO = 'niagova-site';
+// The corporate site may deploy to the hosting root or to its own addon-domain folder.
+export const CORPORATE_DEPLOY_DIRS = ['public_html/', `public_html/${CORPORATE_REPO}/`];
 export const DEMO_SITES = ['petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate'];
 
 // ---------------------------------------------------------------------------
@@ -299,9 +301,9 @@ export function validateDeployDir(dir, { kind, slug, repo } = {}) {
   if (!SITE_KINDS.includes(kind)) throw new PlatformError(`Unknown site kind "${kind}".`, { code: 'INVALID_KIND' });
 
   if (kind === 'corporate') {
-    if (d !== 'public_html/') throw new PlatformError(`Corporate site must deploy to public_html/ (got "${dir}").`, { code: 'UNSAFE_DEPLOY_DIR' });
+    if (!CORPORATE_DEPLOY_DIRS.includes(d)) throw new PlatformError(`Corporate site must deploy to ${CORPORATE_DEPLOY_DIRS.join(' or ')} (got "${dir}").`, { code: 'UNSAFE_DEPLOY_DIR' });
     if (repo && repo !== CORPORATE_REPO && repo !== `mybizgate/${CORPORATE_REPO}`) {
-      throw new PlatformError(`Only ${CORPORATE_REPO} may deploy to public_html/ (repository "${repo}" refused).`, { code: 'UNSAFE_DEPLOY_DIR' });
+      throw new PlatformError(`Only ${CORPORATE_REPO} may deploy to ${d} (repository "${repo}" refused).`, { code: 'UNSAFE_DEPLOY_DIR' });
     }
     return d;
   }

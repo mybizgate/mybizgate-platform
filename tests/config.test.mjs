@@ -30,6 +30,9 @@ test('deployment directory validation enforces the safety rules', () => {
   assert.equal(validateDeployDir('public_html/demo/pawhaven/', { kind: 'demo', slug: 'pawhaven' }), 'public_html/demo/pawhaven/');
   assert.equal(validateDeployDir('public_html/site-petgate/', { kind: 'demo', slug: 'petgate' }), 'public_html/site-petgate/', 'legacy Gate demo paths remain valid');
   assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'niagova-site' }), 'public_html/');
+  assert.equal(validateDeployDir('public_html/niagova-site/', { kind: 'corporate', repo: 'niagova-site' }), 'public_html/niagova-site/');
+  assert.throws(() => validateDeployDir('public_html/niagova-site/', { kind: 'corporate', repo: 'client-pawhaven' }), /Only niagova-site/);
+  assert.throws(() => validateDeployDir('public_html/niagova-site/', { kind: 'client', slug: 'niagova-site' }), /clients/);
   for (const bad of ['', '/', '.', '..', 'public_html/', 'public_html/../x/', 'public_html/clients/../pawhaven/', 'public_html/clients/other/', 'public_html/site-petgate/', 'clients/pawhaven/', '/public_html/clients/pawhaven/', 'public_html/clients/paw haven/']) {
     assert.throws(() => validateDeployDir(bad, { kind: 'client', slug: 'pawhaven' }), `client should reject ${JSON.stringify(bad)}`);
   }
