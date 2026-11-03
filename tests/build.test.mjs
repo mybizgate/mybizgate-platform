@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { rewriteReferences, replaceBuildVersion, injectBuildVersionMeta, buildVersionMetaTag, injectNoindex, rewriteCanonical } from '../build/lib/rewrite.mjs';
 import { shouldConvert, collectProtectedImages, webpTarget } from '../build/lib/images.mjs';
-import { matchesPattern, isExcluded } from '../build/lib/fsutil.mjs';
+import { matchesPattern, isExcluded, DEFAULT_EXCLUDES } from '../build/lib/fsutil.mjs';
 import { validateDist } from '../build/lib/validate.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -95,6 +95,12 @@ test('image conversion decisions preserve icons, manifest and social images', ()
   assert.ok(prot.has('assets/m.png'));
   assert.equal(shouldConvert('assets/og.jpg', { protectedSet: prot }).convert, false);
   assert.equal(webpTarget('a/b.JPG'), 'a/b.webp');
+});
+
+test('platform checkout is never copied into dist', () => {
+  assert.ok(DEFAULT_EXCLUDES.includes('.mybizgate-platform'));
+  assert.ok(isExcluded('.mybizgate-platform/bin/mybizgate', DEFAULT_EXCLUDES));
+  assert.ok(isExcluded('.mybizgate-platform/src/cli.mjs', DEFAULT_EXCLUDES));
 });
 
 test('exclude matcher keeps runtime files and drops dev files', () => {

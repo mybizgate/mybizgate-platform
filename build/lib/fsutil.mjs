@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const DEFAULT_EXCLUDES = [
-  '.git', '.github', '.gitignore', '.gitattributes', '.editorconfig', '.mybizgate', '.vscode', '.idea',
+  '.git', '.github', '.gitignore', '.gitattributes', '.editorconfig', '.mybizgate', '.mybizgate-platform', '.vscode', '.idea',
   'node_modules', 'dist', 'docs', 'tests', 'test', 'screenshots', 'build-report.json',
   'README.md', 'README.txt', 'readme.md', 'AGENTS.md', 'CLAUDE.md', 'LICENSE', 'CHANGELOG.md',
   'site.config.yml', 'site.config.example.yml', '.mybizgate.local.yml', 'template.yml', 'package.json', 'package-lock.json',
