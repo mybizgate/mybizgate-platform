@@ -1,6 +1,6 @@
 {
   "name": "mybizgate-platform",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "description": "MyBizGate website provisioning, build, deployment and client onboarding platform.",
   "type": "module",
