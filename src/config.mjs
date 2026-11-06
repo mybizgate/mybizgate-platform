@@ -44,8 +44,9 @@ export const PROJECT_TYPES = ['client', 'demo'];
 export const VISIBILITIES = ['private', 'public'];
 
 export const CORPORATE_REPO = 'niagova-site';
-// The corporate site may deploy to the hosting root or to its own addon-domain folder.
-export const CORPORATE_DEPLOY_DIRS = ['public_html/', `public_html/${CORPORATE_REPO}/`];
+// Each corporate site owns one document root: niagova.com is an addon domain with its own folder,
+// and public_html/ stays the root of mybizgate.com. Neither repository may deploy to the other's.
+export const CORPORATE_SITES = { [CORPORATE_REPO]: `public_html/${CORPORATE_REPO}/`, 'mybizgate-site': 'public_html/' };
 export const DEMO_SITES = ['petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate'];
 
 const DEFAULT_BASE_DOMAINS = 'mybizgate.com,niagova.com';
@@ -324,10 +325,12 @@ export function validateDeployDir(dir, { kind, slug, repo } = {}) {
   if (!SITE_KINDS.includes(kind)) throw new PlatformError(`Unknown site kind "${kind}".`, { code: 'INVALID_KIND' });
 
   if (kind === 'corporate') {
-    if (!CORPORATE_DEPLOY_DIRS.includes(d)) throw new PlatformError(`Corporate site must deploy to ${CORPORATE_DEPLOY_DIRS.join(' or ')} (got "${dir}").`, { code: 'UNSAFE_DEPLOY_DIR' });
-    if (repo && repo !== CORPORATE_REPO && repo !== `mybizgate/${CORPORATE_REPO}`) {
-      throw new PlatformError(`Only ${CORPORATE_REPO} may deploy to ${d} (repository "${repo}" refused).`, { code: 'UNSAFE_DEPLOY_DIR' });
+    const repoName = repo ? repo.split('/').pop() : null;
+    if (repoName && !CORPORATE_SITES[repoName]) {
+      throw new PlatformError(`Only ${Object.keys(CORPORATE_SITES).join(' and ')} may deploy as corporate sites (repository "${repo}" refused).`, { code: 'UNSAFE_DEPLOY_DIR' });
     }
+    const allowed = repoName ? [CORPORATE_SITES[repoName]] : Object.values(CORPORATE_SITES);
+    if (!allowed.includes(d)) throw new PlatformError(`Corporate site must deploy to ${allowed.join(' or ')} (got "${dir}").`, { code: 'UNSAFE_DEPLOY_DIR' });
     return d;
   }
   if (d === 'public_html/') {
@@ -418,7 +421,7 @@ export function buildSiteConfig({ name, slug, template, templateVersion = null, 
     cfg.domain = { type: 'subdomain', primary: legacyDemo ? naming.subdomainHost(slug, env, parentDomain) : naming.demoHost(slug, env, parentDomain) };
     cfg.github.repo = legacyDemo ? naming.legacyDemoRepoName(slug) : naming.demoRepoName(slug);
   } else {
-    cfg.hosting.deploy_dir = 'public_html/';
+    cfg.hosting.deploy_dir = CORPORATE_SITES[CORPORATE_REPO];
     cfg.hosting.ftp_account = 'shared';
     cfg.domain = { type: 'custom', primary: env.baseDomain, dns_mode: 'awedns' };
     cfg.github.repo = CORPORATE_REPO;

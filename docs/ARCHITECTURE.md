@@ -32,6 +32,7 @@ template identity (`template.id` = `<business-type>/<template>`, `template.versi
 | site.kind | allowed deploy_dir | repository |
 | --- | --- | --- |
 | corporate | `public_html/` | only `mybizgate-site` |
+| corporate | `public_html/niagova-site/` | only `niagova-site` |
 | demo (generated) | `public_html/demo/<slug>/` | `demo-<slug>` |
 | demo (legacy Gate) | `public_html/site-<slug>/` | `site-<slug>` |
 | client | `public_html/clients/<slug>/` | `client-<slug>` |

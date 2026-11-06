@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { log, PlatformError, parseArgs, exists, commandExists, run, redact, timestamp, formatBytes, dirSize, readJson } from './utils.mjs';
 import {
-  loadEnv, envStatus, naming, WORKSPACE_DIR, PLATFORM_DIR, CLIENTS_DIR, SITE_CONFIG_FILE, CORPORATE_REPO, DEMO_SITES,
+  loadEnv, envStatus, naming, WORKSPACE_DIR, PLATFORM_DIR, CLIENTS_DIR, SITE_CONFIG_FILE, CORPORATE_REPO, CORPORATE_SITES, DEMO_SITES,
   loadSiteConfig, validateSiteConfig, buildSiteConfig, serializeSiteConfig, resolveSiteDir, inferSiteKind, resolveServerDir, validateDeployDir, validateSlug,
   validatePlatformRef, PLATFORM_RELEASE_REF, PLATFORM_VERSION,
 } from './config.mjs';
@@ -236,7 +236,7 @@ async function cmdResolveTarget(opts, env) {
     deployDir = validateDeployDir(inputs.deployDir, { kind: cfg.site.kind, slug: cfg.client.slug, repo: repoName });
     if (deployDir !== cfg.hosting.deploy_dir) throw new PlatformError(`DEPLOY_DIR variable (${deployDir}) does not match site.config.yml (${cfg.hosting.deploy_dir}); refusing.`);
   }
-  if (cfg.site.kind === 'corporate' && repoName !== CORPORATE_REPO) throw new PlatformError(`Repository ${repo} may not deploy to public_html/.`);
+  if (cfg.site.kind === 'corporate' && !CORPORATE_SITES[repoName]) throw new PlatformError(`Repository ${repo} may not deploy as a corporate site.`);
   if (cfg.site.kind !== 'corporate' && deployDir === 'public_html/') throw new PlatformError('Refusing to deploy to public_html/.');
   if (cfg.site.kind === 'client' && repo && env.githubOwner && !repo.toLowerCase().startsWith(`${env.githubOwner.toLowerCase()}/client-`)) {
     log.warn(`Repository ${repo} does not follow the client-<slug> convention.`);

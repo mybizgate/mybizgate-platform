@@ -29,7 +29,10 @@ test('deployment directory validation enforces the safety rules', () => {
   assert.equal(validateDeployDir('public_html/clients/pawhaven', { kind: 'client', slug: 'pawhaven' }), 'public_html/clients/pawhaven/');
   assert.equal(validateDeployDir('public_html/demo/pawhaven/', { kind: 'demo', slug: 'pawhaven' }), 'public_html/demo/pawhaven/');
   assert.equal(validateDeployDir('public_html/site-petgate/', { kind: 'demo', slug: 'petgate' }), 'public_html/site-petgate/', 'legacy Gate demo paths remain valid');
-  assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'niagova-site' }), 'public_html/');
+  assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'mybizgate-site' }), 'public_html/');
+  assert.equal(validateDeployDir('public_html/', { kind: 'corporate', repo: 'mybizgate/mybizgate-site' }), 'public_html/');
+  assert.throws(() => validateDeployDir('public_html/', { kind: 'corporate', repo: 'niagova-site' }), /must deploy to public_html\/niagova-site\//);
+  assert.throws(() => validateDeployDir('public_html/niagova-site/', { kind: 'corporate', repo: 'mybizgate-site' }), /must deploy to public_html\//);
   assert.equal(validateDeployDir('public_html/niagova-site/', { kind: 'corporate', repo: 'niagova-site' }), 'public_html/niagova-site/');
   assert.throws(() => validateDeployDir('public_html/niagova-site/', { kind: 'corporate', repo: 'client-pawhaven' }), /Only niagova-site/);
   assert.throws(() => validateDeployDir('public_html/niagova-site/', { kind: 'client', slug: 'niagova-site' }), /clients/);
@@ -100,6 +103,6 @@ test('demo and corporate configs', () => {
   assert.equal(legacyDemo.hosting.deploy_dir, 'public_html/site-petgate/');
   assert.equal(legacyDemo.github.repo, 'site-petgate');
   const corp = validateSiteConfig(buildSiteConfig({ name: 'Niagova', slug: 'niagova', template: 'blank', kind: 'corporate', env }), { repo: 'niagova-site' });
-  assert.equal(corp.hosting.deploy_dir, 'public_html/');
+  assert.equal(corp.hosting.deploy_dir, 'public_html/niagova-site/');
   assert.throws(() => validateSiteConfig(buildSiteConfig({ name: 'MyBizGate', slug: 'mybizgate', template: 'blank', kind: 'corporate', env }), { repo: 'client-evil' }));
 });
