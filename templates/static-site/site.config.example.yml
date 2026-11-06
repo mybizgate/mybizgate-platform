@@ -10,7 +10,7 @@ template:
   version: null                # copied from the template's template.yml when it has one
   # Older configs use "type: petgate" (a demo name); that form is still accepted.
 
-platform_ref: v1.7.0       # MyBizGate platform release this site's workflow is pinned to
+platform_ref: v1.7.1       # MyBizGate platform release this site's workflow is pinned to
                            # (change with: mybizgate platform-ref <slug> --set vX.Y.Z --apply)
 
 domain:
