@@ -76,7 +76,7 @@ Dry run performs the generation and residue scan in a temporary directory; Apply
 Site repositories contain only the small caller workflow (`templates/static-site/.github/workflows/deploy.yml`).
 It calls `mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@<platform_ref>` and passes the same
 `platform_ref` to the build-engine checkout. New projects are pinned to the platform release they were created with
-(`v1.5.2`, recorded as `platform_ref` in `site.config.yml`); nothing on platform `main` reaches a project until
+(`v1.6.0`, recorded as `platform_ref` in `site.config.yml`); nothing on platform `main` reaches a project until
 `mybizgate platform-ref <slug> --set vX.Y.Z --apply` is run for it. The reusable workflow:
 
 checkout site → checkout platform → Node 22 → `npm ci` (locked) → `resolve-target` (validates `site.config.yml`

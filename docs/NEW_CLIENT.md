@@ -128,19 +128,19 @@ Preview a template for a client without provisioning:
 Every generated project workflow uses an explicit platform release:
 
 ```yaml
-uses: mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@v1.5.2
+uses: mybizgate/mybizgate-platform/.github/workflows/static-site-deploy.yml@v1.6.0
 with:
-  platform_ref: v1.5.2
+  platform_ref: v1.6.0
 ```
 
-The same value is recorded as `platform_ref: v1.5.2` in `site.config.yml`. New projects default to the release of the
+The same value is recorded as `platform_ref: v1.6.0` in `site.config.yml`. New projects default to the release of the
 platform checkout that creates them (`mybizgate version`); override with `--platform-ref` or `MYBIZGATE_PLATFORM_REF`.
 Existing projects are **never upgraded automatically**. To upgrade one deliberately:
 
 ```bash
 ./platform/bin/mybizgate platform-ref pawhaven                      # show the current pin
-./platform/bin/mybizgate platform-ref pawhaven --set v1.5.2         # dry run: shows what would change
-./platform/bin/mybizgate platform-ref pawhaven --set v1.5.2 --apply # rewrites the workflow + config, commits on main
+./platform/bin/mybizgate platform-ref pawhaven --set v1.6.0         # dry run: shows what would change
+./platform/bin/mybizgate platform-ref pawhaven --set v1.6.0 --apply # rewrites the workflow + config, commits on main
 cd clients/client-pawhaven && git push origin main                  # review, then release:
 git checkout deploy && git merge --ff-only main && git push origin deploy
 ```
