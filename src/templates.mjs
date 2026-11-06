@@ -9,6 +9,9 @@
 // placeholder: it is listed and can be dry-run, but it cannot generate a client website.
 // Optional metadata lives in template.yml (name, version, description, ...).
 //
+// A first-level folder that holds its own index.html is a standalone template, for starters that
+// belong to no business type (templates/00-empty-template/). Its reference is the folder name.
+//
 // A template reference ("ref") is the path form "<business-type>/<template>", for example
 // "pet-boarding/modern-01". It is the identity stored in the client's site.config.yml.
 import fs from 'node:fs';
@@ -136,15 +139,24 @@ export function readTemplateMetadata(dir, { ref } = {}) {
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
+const isStandalone = (dir) => exists(path.join(dir, 'index.html'));
+
 export function discoverCategories({ root = templatesDir() } = {}) {
   return listDirs(root)
     .filter((name) => SEGMENT_RE.test(name))
-    .map((id) => ({ id, name: humanize(id), dir: path.join(root, id), templateCount: listDirs(path.join(root, id)).filter((t) => SEGMENT_RE.test(t)).length }));
+    .map((id) => {
+      const dir = path.join(root, id);
+      if (isStandalone(dir)) return { id, name: describeTemplate(id, dir).name, dir, standalone: true, templateCount: 1 };
+      return { id, name: humanize(id), dir, templateCount: listDirs(dir).filter((t) => SEGMENT_RE.test(t)).length };
+    });
 }
 
 export function describeTemplate(ref, dir) {
-  const [category, folder] = ref.split('/');
+  const [category, folder = category] = ref.split('/');
+  const standalone = !ref.includes('/');
   const { metadata, warnings } = readTemplateMetadata(dir, { ref });
+  // "00-empty-template" -> "Empty Template": the number only controls the menu order.
+  const name = (metadata && metadata.name) || humanize(standalone ? folder.replace(/^\d+-/, '') : folder);
   const files = countSourceFiles(dir);
   const hasIndex = exists(path.join(dir, 'index.html'));
   const status = hasIndex ? TEMPLATE_STATUS.READY : files === 0 ? TEMPLATE_STATUS.PLACEHOLDER : TEMPLATE_STATUS.INCOMPLETE;
@@ -152,9 +164,10 @@ export function describeTemplate(ref, dir) {
     ref,
     id: ref,
     category,
-    categoryName: humanize(category),
+    categoryName: standalone ? name : humanize(category),
     folder,
-    name: (metadata && metadata.name) || humanize(folder),
+    name,
+    standalone,
     description: (metadata && metadata.description) || '',
     version: (metadata && metadata.version) || null,
     dir,
@@ -175,6 +188,7 @@ export function discoverTemplates(categoryId, { root = templatesDir() } = {}) {
     const available = discoverCategories({ root }).map((c) => c.id);
     throw new PlatformError(`Unknown business type "${categoryId}".`, { code: 'INVALID_TEMPLATE', hint: available.length ? `Available: ${available.join(', ')} (from ${root})` : `No business types found in ${root}` });
   }
+  if (isStandalone(catDir)) return [describeTemplate(categoryId, catDir)];
   return listDirs(catDir).filter((t) => SEGMENT_RE.test(t)).map((folder) => describeTemplate(`${categoryId}/${folder}`, path.join(catDir, folder)));
 }
 
@@ -196,6 +210,7 @@ export function resolveTemplate(ref, { root = templatesDir() } = {}) {
     const usable = exists(path.join(dir, 'index.html'));
     return { ref: value, id: value, category: null, categoryName: 'Legacy demo', folder: value, name: `${humanize(value)} (legacy demo source)`, description: `Copy of the ${value}/ demo site. Deprecated: use templates/<business-type>/<template>.`, version: null, dir, status: usable ? TEMPLATE_STATUS.READY : TEMPLATE_STATUS.INCOMPLETE, placeholder: !usable, usable, files: usable ? countSourceFiles(dir) : 0, metadata: null, warnings: [`Template "${value}" copies the ${value}/ demo site directly; this is deprecated. Prefer a template under templates/.`], legacy: true };
   }
+  if (SEGMENT_RE.test(value) && isStandalone(path.join(root, value))) return describeTemplate(value, path.join(root, value));
   const m = TEMPLATE_REF_RE.exec(value);
   if (!m || value.includes('..')) {
     throw new PlatformError(`Invalid template "${value}". Use the form <business-type>/<template>, for example pet-boarding/modern-01.`, { code: 'INVALID_TEMPLATE', hint: 'Run "mybizgate templates" to list the template library.' });

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MockCPanelProvider } from '../src/cpanel.mjs';
 import { MockGitHubProvider } from '../src/github.mjs';
-import { newClient, normalizeInput, wizard } from '../src/provision.mjs';
+import { acceptDryRun, expectedResult, newClient, normalizeInput, wizard } from '../src/provision.mjs';
 import { ensureSubdomain, ensureDedicatedFtp } from '../src/hosting.mjs';
 import { buildSiteConfig, validateSiteConfig, validateCustomDomain, validateParentDomain, validateSlug, loadEnv, naming } from '../src/config.mjs';
 import { createScriptedIo } from '../src/prompt.mjs';
@@ -106,6 +106,52 @@ test('apply stops before any change when the parent domain cannot resolve the ne
   await assert.rejects(newClient(input, { env, cpanel, github, apply: true, yes: true }), (err) => err.code === 'PARENT_DOMAIN_NOT_READY' && /A record/.test(err.hint));
   assert.deepEqual(cpanel.state.calls, []);
   assert.deepEqual(github.state.calls, []);
+  assert.equal(fs.existsSync(naming.clientDir(input.slug)), false);
+});
+
+test('the dry-run result block lists the URL, repo, local folder and FTP folder', () => {
+  const block = (input) => expectedResult(validateSiteConfig(buildSiteConfig({ name: 'LZ Hub', slug: 'lzhub', template: 'blank', env, ...input })), env);
+  const client = block({ parentDomain: 'niagova.com' });
+  assert.match(client, /Website URL +: https:\/\/lzhub\.niagova\.com\n/);
+  assert.match(client, /GitHub Repo +: mybizgate\/client-lzhub\n/);
+  assert.match(client, /Local Folder +: .*\/clients\/client-lzhub\n/);
+  assert.match(client, /FTP Folder +: \/public_html\/clients\/lzhub\/\n/);
+  assert.doesNotMatch(client, /Staging URL/);
+  const demo = block({ kind: 'demo', visibility: 'public' });
+  assert.match(demo, /Website URL +: https:\/\/demo-lzhub\.mybizgate\.com\n/);
+  assert.match(demo, /GitHub Repo +: mybizgate\/demo-lzhub\n/);
+  assert.match(demo, /Local Folder +: .*\/demo\/demo-lzhub\n/);
+  assert.match(demo, /FTP Folder +: \/public_html\/demo\/lzhub\/\n/);
+  const custom = block({ domainType: 'custom', customDomain: 'lzhub.com.my' });
+  assert.match(custom, /Website URL +: https:\/\/lzhub\.com\.my\nStaging URL +: https:\/\/stg-lzhub\.mybizgate\.com\n/);
+});
+
+test('accepting a dry run applies the same answers; declining or a blocker changes nothing', async () => {
+  const input = { name: 'Accept Co', slug: 'accept-dry-zz', template: 'blank', parentDomain: 'niagova.com' };
+  const run = async (answers, providerOptions) => {
+    const cpanel = new MockCPanelProvider(providerOptions);
+    const github = new MockGitHubProvider();
+    github.refExists = async () => false; // stops Apply at its first remote check, before anything is created
+    const dry = await newClient(input, { env, cpanel, github, apply: false });
+    const io = createScriptedIo(answers);
+    return { dry, io, cpanel, github, accept: () => acceptDryRun(dry, input, { io, env, cpanel, github }) };
+  };
+
+  const declined = await run(['n']);
+  assert.equal(await declined.accept(), declined.dry);
+  assert.deepEqual(declined.cpanel.state.calls, []);
+
+  const empty = await run(['']);
+  assert.equal(await empty.accept(), empty.dry, 'the default answer is No');
+  assert.match(empty.io.text, /Apply these settings now\? \[y\/N\]: /);
+
+  const blocked = await run(['y'], { undelegated: ['niagova.com'] });
+  assert.equal(await blocked.accept(), blocked.dry);
+  assert.equal(blocked.io.queue.length, 1, 'a blocked dry run does not offer Apply');
+
+  const accepted = await run(['y']);
+  await assert.rejects(accepted.accept(), (err) => err.code === 'PLATFORM_REF_MISSING', 'y runs the real Apply path with no second question');
+  assert.equal(accepted.io.queue.length, 0);
   assert.equal(fs.existsSync(naming.clientDir(input.slug)), false);
 });
 

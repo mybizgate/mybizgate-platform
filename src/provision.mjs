@@ -131,6 +131,7 @@ export async function wizard(initial = {}, env = loadEnv(), { io = createConsole
         }
         const category = await askMenu('Available Business Types', categories.map((c) => ({ id: c.id, label: c.name, category: c })), { prompt: 'Select business type' });
         const templates = discoverTemplates(category.id, { root: templatesRoot });
+        if (category.category.standalone) { [template] = templates; break; }
         if (!templates.length) { status('[WARN]', `No templates found under ${path.relative(WORKSPACE_DIR, category.category.dir) || category.category.dir}/. Choose another business type.`); say(''); continue; }
         const chosen = await askMenu(`${category.label} Templates`, templates.map((t) => ({ id: t.folder, label: t.name, template: t })), { prompt: 'Select template' });
         template = chosen.template;
@@ -349,6 +350,19 @@ export function clientSummary(cfg, env = loadEnv(), { template, businessType, ap
   const img = images || null;
   lines.push(row('Images (local)', img && img.path ? `${img.path}${img.exists === false ? ' (not found)' : img.images != null ? ` (${img.images} image file(s))` : ''} -> ${LOCAL_CONFIG_FILE}` : '(none)'));
   lines.push(row('Mode', apply ? 'Apply / Provision' : 'Dry Run'));
+  lines.push(THIN_RULE);
+  return lines.join('\n');
+}
+
+// The closing block of a dry run: what an Apply with these answers would produce.
+export function expectedResult(cfg, env = loadEnv()) {
+  const row = (k, v) => `${k.padEnd(17)}: ${v}`;
+  const lines = [THIN_RULE, 'EXPECTED RESULT', THIN_RULE];
+  lines.push(row('Website URL', cfg.site.production_url));
+  if (cfg.site.staging_url) lines.push(row('Staging URL', cfg.site.staging_url));
+  lines.push(row('GitHub Repo', `${env.githubOwner}/${cfg.github.repo}`));
+  lines.push(row('Local Folder', naming.projectDir(cfg.site.kind, cfg.client.slug)));
+  lines.push(row('FTP Folder', `/${cfg.hosting.deploy_dir}`));
   lines.push(THIN_RULE);
   return lines.join('\n');
 }
@@ -582,6 +596,8 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
     if (contentBlocked) log.warn(`Apply would stop: template requires ${missingContent.join(', ')}.`);
     if (residueBlocked) log.warn('Apply would stop before creating production resources: source-template branding remains.');
     if (dnsProblem) { log.warn(`Apply would stop: ${dnsProblem.message}`); log.info(dnsProblem.hint); }
+    log.raw('');
+    log.raw(expectedResult(cfg, env));
     log.dry('Dry run only. Nothing was created. Re-run with --apply to provision.');
     return { cfg, clientDir, dryRun: true, template: tpl, templateBlocked, contentBlocked, residueBlocked, dnsProblem, preflight };
   }
@@ -786,6 +802,17 @@ async function checkParentDomain(host, { cpanel, env }) {
   const message = `${host} will not resolve: ${parent} uses ${dns.nameservers.join(', ') || 'unknown nameservers'}, not ${env.nameservers.join(', ')}.`;
   log.warn(message);
   return { message, hint: `Point ${parent} at ${env.nameservers.join(' and ')} (one-time), or add an A record ${host} -> ${ip} or *.${parent} -> ${ip} at its DNS provider, then re-run.` };
+}
+
+/**
+ * After a wizard dry run, offer to apply the same answers so nothing has to be retyped.
+ * Skipped when the dry run found a blocker (already reported). The apply run repeats every check;
+ * the answer here replaces its own confirmation.
+ */
+export async function acceptDryRun(result, input, { io, ...options } = {}) {
+  if (result.templateBlocked || result.contentBlocked || result.residueBlocked || result.dnsProblem) return result;
+  if (!(await confirm('Apply these settings now?', { io }))) { log.info('Nothing was created.'); return result; }
+  return newClient(input, { ...options, apply: true, yes: true });
 }
 
 async function promoteCustomDomain(cfg, clientDir, { github, repo }) {

@@ -7,7 +7,9 @@ import {
   humanize, discoverCategories, discoverTemplates, discoverAllTemplates, resolveTemplate, readTemplateMetadata, templateStatusText,
   countSourceFiles, TEMPLATE_STATUS, PLACEHOLDER_WARNING, templatesDir, TEMPLATES_DIR_ENV_VAR,
 } from '../src/templates.mjs';
-import { copyTemplate } from '../src/provision.mjs';
+import { copyTemplate, wizard } from '../src/provision.mjs';
+import { createScriptedIo } from '../src/prompt.mjs';
+import { loadEnv } from '../src/config.mjs';
 
 // Build a throw-away template library mirroring the workspace layout.
 function fakeLibrary() {
@@ -168,4 +170,28 @@ test('the real workspace library is discoverable and currently placeholder-only 
   const cats = discoverCategories({ root });
   assert.ok(cats.length >= 1);
   for (const c of cats) for (const t of discoverTemplates(c.id, { root })) assert.ok([TEMPLATE_STATUS.READY, TEMPLATE_STATUS.PLACEHOLDER, TEMPLATE_STATUS.INCOMPLETE].includes(t.status));
+});
+
+test('a top-level folder with index.html is a standalone template; an empty one is not', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mbg-standalone-'));
+  fs.mkdirSync(path.join(root, '00-empty-template'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'beauty', 'modern-01'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'beauty', 'modern-01', 'index.html'), '<h1>x</h1>');
+  assert.equal(discoverCategories({ root }).find((c) => c.id === '00-empty-template').standalone, undefined);
+  assert.throws(() => resolveTemplate('00-empty-template', { root }), /Invalid template/);
+
+  fs.writeFileSync(path.join(root, '00-empty-template', 'index.html'), '<h1>x</h1>');
+  const [first] = discoverCategories({ root });
+  assert.deepEqual([first.id, first.name, first.standalone], ['00-empty-template', 'Empty Template', true]);
+  const t = resolveTemplate('00-empty-template', { root });
+  assert.deepEqual([t.ref, t.name, t.categoryName, t.usable], ['00-empty-template', 'Empty Template', 'Empty Template', true]);
+  assert.deepEqual(discoverAllTemplates({ root }).map((x) => x.ref), ['00-empty-template', 'beauty/modern-01']);
+
+  const answers = ['1', 'Empty Co', 'empty-co', '', '1', '1', '1', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', ''];
+  const io = createScriptedIo(answers);
+  const out = await wizard({}, loadEnv({ HOME: os.tmpdir() }), { io, templatesRoot: root });
+  assert.equal(out.template, '00-empty-template');
+  assert.equal(out.businessType, 'Empty Template');
+  assert.match(io.text, /\[1\] Empty Template\n\[2\] Beauty\n/);
+  assert.doesNotMatch(io.text, /Empty Template Templates/, 'no second menu');
 });

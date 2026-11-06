@@ -35,7 +35,10 @@ The wizard asks, in order:
 Then the usual `[CHECK]` lines run (dependencies, environment, template, local folder, GitHub repository,
 cPanel domain, hosting directory, parent domain), the **NEW CLIENT SUMMARY** or **NEW DEMO SUMMARY** block and the `[PLAN]` are printed, and:
 
-- Dry Run ends with `[DRY ] Dry run only. Nothing was created.`
+- Dry Run ends with an **EXPECTED RESULT** block (website URL, GitHub repo, local folder, FTP folder), then
+  `[DRY ] Dry run only. Nothing was created.` The wizard then asks `Apply these settings now? [y/N]`: `y` provisions
+  with the same answers (every check runs again), Enter leaves everything as it is. The question is skipped when the
+  dry run found a blocker.
 - Apply asks `Proceed with provisioning? [y/N]:` - the default is **No**; only `y`/`yes` continues.
 
 ## CLI mode (automation)
@@ -94,6 +97,11 @@ templates/<business-type>/<template>/      e.g. templates/pet-boarding/modern-01
 
 Templates are discovered from the filesystem every run. Adding `templates/pet-boarding/luxury-02/` makes
 `Luxury 02` appear in the wizard immediately; `./platform/bin/mybizgate templates` lists everything with its status.
+
+A first-level folder with its own `index.html` is a **standalone template** that belongs to no business type.
+`templates/00-empty-template/` is one: the wizard lists it first as `[1] Empty Template` and skips the second menu, and
+its reference is the folder name (`--template 00-empty-template`). The page reports whether HTML, CSS and JavaScript
+loaded and is `noindex` until the real website replaces it.
 
 - **ready**: contains `index.html` (plus CSS/JS/images). It is copied into the selected client or demo project folder.
 - **placeholder**: only `.gitkeep` (or empty). It can be selected and dry-run, with

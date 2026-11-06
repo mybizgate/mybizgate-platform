@@ -16,7 +16,7 @@ import { checkDns, resolveNs, hostingIp, dnsInstructions, checkDelegation } from
 import { checkHttps } from './ssl.mjs';
 import { qaDist, healthCheck, waitForHealthy, assertHealthy } from './verify.mjs';
 import { buildWithEngine, summarizeReport } from './build.mjs';
-import { newClient, wizard, confirm, writeProjectFiles, renderCallerWorkflow, readPlatformRef, generateClientProject, normalizeInput, suggestSlug } from './provision.mjs';
+import { newClient, acceptDryRun, wizard, confirm, writeProjectFiles, renderCallerWorkflow, readPlatformRef, generateClientProject, normalizeInput, suggestSlug } from './provision.mjs';
 import { missingRequiredContent, formatResidue } from './personalize.mjs';
 import { PLACEHOLDER_WARNING } from './templates.mjs';
 import { loadDotenv, dotenvState, describeDotenv, DOTENV_ENV_VAR, DOTENV_TRACE_VAR, WORKSPACE_ENV_VAR } from './dotenv.mjs';
@@ -287,7 +287,9 @@ async function cmdNewClient(opts, env) {
   if (!resume && !input.slug) throw new PlatformError('--slug is required.', { hint: 'Example: --name "Paw Haven Cat Hotel" --slug pawhaven --template pet-boarding/modern-01 --project-type client --domain-type subdomain' });
   if (!resume && !interactive && !input.template) throw new PlatformError('--template is required.', { hint: 'Run "mybizgate templates" to list the template library, or use --template blank.' });
   const apply = Boolean(opts.apply) || input.apply === true;
-  const r = await newClient(input, { env, cpanel, github, apply, resume, yes: Boolean(opts.yes), requireContact: interactive });
+  const options = { env, cpanel, github, requireContact: interactive };
+  let r = await newClient(input, { ...options, apply, resume, yes: Boolean(opts.yes) });
+  if (interactive && r && r.dryRun && !opts.mock) r = await acceptDryRun(r, input, options);
   return r && (r.aborted ? 1 : 0);
 }
 
