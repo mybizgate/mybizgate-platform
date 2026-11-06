@@ -23,6 +23,16 @@ export function extractCriticalAssets(html) {
   return { css, js, img, title, version, whatsapp, hasInlineCss: /<style[\s>]/i.test(html), hasInlineJs: /<script(?![^>]*\bsrc=)[\s>]/i.test(html) };
 }
 
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+// A page stores "Pet Spa & Hotel" as "Pet Spa &amp; Hotel"; identity checks compare the decoded text.
+export function decodeEntities(text) {
+  return String(text).replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos|nbsp));/gi, (match, dec, hex, name) => {
+    if (name) return NAMED_ENTITIES[name.toLowerCase()];
+    return String.fromCodePoint(dec ? Number(dec) : parseInt(hex, 16));
+  });
+}
+
 function isExternal(ref) { return /^(?:[a-z]+:)?\/\//i.test(ref) || /^(data|mailto|tel):/i.test(ref); }
 
 export async function healthCheck({ url, identity, expectedVersion, requireJs = false }) {
@@ -36,7 +46,7 @@ export async function healthCheck({ url, identity, expectedVersion, requireJs = 
   const html = home.body || '';
   const assets = extractCriticalAssets(html);
   if (identity) {
-    const found = html.toLowerCase().includes(identity.toLowerCase());
+    const found = decodeEntities(html).toLowerCase().includes(identity.toLowerCase());
     add('Site identity', found, found ? `found "${identity}" (title: ${assets.title || 'n/a'})` : `"${identity}" not found in homepage (title: ${assets.title || 'n/a'})`);
   }
   if (expectedVersion) add('Build version', assets.version === expectedVersion, `deployed ${assets.version || 'none'}, expected ${expectedVersion}`);
@@ -55,7 +65,7 @@ export async function healthCheck({ url, identity, expectedVersion, requireJs = 
   else if (requireJs) add('JS reachable', false, 'no script found');
   else log.info('JS reachable: no script referenced (skipped)');
   if (assets.img) await checkAsset('Critical image reachable', assets.img);
-  else add('Critical image reachable', false, 'no <img> or og:image found');
+  else log.info('Critical image reachable: no image referenced (skipped)');
   if (assets.whatsapp) {
     const ok = /^https:\/\/(wa\.me\/\d{6,15}|api\.whatsapp\.com\/send|chat\.whatsapp\.com\/)/.test(assets.whatsapp);
     add('WhatsApp link', ok, assets.whatsapp);

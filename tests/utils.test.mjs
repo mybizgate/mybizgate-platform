@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { redact, registerSecret, parseArgs, randomPassword, PlatformError } from '../src/utils.mjs';
 import { dnsState, registrableDomain, dnsInstructions } from '../src/dns.mjs';
-import { extractCriticalAssets } from '../src/verify.mjs';
+import { decodeEntities, extractCriticalAssets } from '../src/verify.mjs';
 
 test('secret redaction removes env secrets, registered secrets and credential patterns', () => {
   const env = { CPANEL_TOKEN: 'TOKENVALUE123456', FTP_PASSWORD: 'ftpSecret!2026' };
@@ -54,4 +54,10 @@ test('critical asset extraction from homepage HTML', () => {
   assert.equal(a.version, 'abc12345');
   assert.equal(a.title, 'PetGate');
   assert.match(a.whatsapp, /^https:\/\/wa\.me\//);
+});
+
+test('HTML entities are decoded so a business name with symbols passes the identity check', () => {
+  assert.equal(decodeEntities('<title>Pet Spa &amp; Hotel</title>'), '<title>Pet Spa & Hotel</title>');
+  assert.equal(decodeEntities('Dr. Lim&#39;s &#x26; Sons &quot;KL&quot;'), 'Dr. Lim\'s & Sons "KL"');
+  assert.equal(decodeEntities('AT&T &unknown;'), 'AT&T &unknown;');
 });
