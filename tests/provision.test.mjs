@@ -84,12 +84,12 @@ test('apply stops before creating anything when the pinned platform release is u
 
 test('hosting steps are idempotent and honour dry-run', async () => {
   const cpanel = new MockCPanelProvider({ subdomains: ['existing.mybizgate.com'] });
-  const dry = await ensureSubdomain(cpanel, { host: 'new.mybizgate.com', label: 'new', dir: 'public_html/clients/new/', apply: false });
+  const dry = await ensureSubdomain(cpanel, { host: 'new.mybizgate.com', dir: 'public_html/clients/new/', apply: false });
   assert.equal(dry.dryRun, true);
   assert.deepEqual(cpanel.state.calls, []);
-  const created = await ensureSubdomain(cpanel, { host: 'new.mybizgate.com', label: 'new', dir: 'public_html/clients/new/', apply: true });
+  const created = await ensureSubdomain(cpanel, { host: 'new.mybizgate.com', dir: 'public_html/clients/new/', apply: true });
   assert.equal(created.created, true);
-  const again = await ensureSubdomain(cpanel, { host: 'new.mybizgate.com', label: 'new', dir: 'public_html/clients/new/', apply: true });
+  const again = await ensureSubdomain(cpanel, { host: 'new.mybizgate.com', dir: 'public_html/clients/new/', apply: true });
   assert.equal(again.created, false);
   assert.equal(cpanel.state.calls.filter((c) => c[0] === 'createSubdomain').length, 1);
   const addon = await ensureCustomDomain(cpanel, { domain: 'client.com.my', label: 'client', dir: 'public_html/clients/client/', apply: true });

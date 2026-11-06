@@ -54,6 +54,7 @@ test('wizard: header, dynamic menus, slug suggestion, placeholder warning, dry-r
     '5',                   // business type: automotive(1, empty) beauty(2) dental(3) general-business(4) pet-boarding(5) supplier(6)
     '1',                   // template: Modern 01
     '',                    // domain type -> default [1] subdomain
+    '',                    // parent domain -> default [1] mybizgate.com
     '+60123456789', 'hello@pawhaven.com', 'Kuala Lumpur', // required business info
     '',                    // locality -> derived "Kuala Lumpur"
     '', '', '', '', '',    // phone, opening hours, facebook, instagram, tiktok
@@ -70,7 +71,7 @@ test('wizard: header, dynamic menus, slug suggestion, placeholder warning, dry-r
   assert.match(text, /Available Business Types\n\n\[1\] Automotive\n\[2\] Beauty\n\[3\] Dental\n\[4\] General Business\n\[5\] Pet Boarding\n\[6\] Supplier\n\nSelect business type:\n> 5\n/);
   assert.match(text, /Pet Boarding Templates\n\n\[1\] Modern 01\n\[2\] Playful 01\n\[3\] Premium 01\n\nSelect template:\n> 1\n/);
   assert.match(text, /\[WARN\] Template pet-boarding\/modern-01 currently contains no website source files\./);
-  assert.match(text, /Domain Type\n\n\[1\] MyBizGate Subdomain\n\[2\] Client Custom Domain\n\nSelect \[1\]:\n> \n/);
+  assert.match(text, /Domain Type\n\n\[1\] Subdomain\n\[2\] New Domain \(client custom domain\)\n\nSelect \[1\]:\n> \n/);
   assert.match(text, /Domain: pawhaven\.mybizgate\.com/);
   assert.match(text, /Business Information\n\nWhatsApp:\n> \+60123456789\n/);
   assert.match(text, /Client images folder \(optional, e\.g\. [^)]*\):\n> \n\n\[INFO\] No client image folder supplied\./);
@@ -98,6 +99,7 @@ test('wizard: invalid slug, invalid selections and invalid contact details are r
     '9', 'x', 'dental',                   // invalid numbers then the category id
     '0', '1',                             // invalid template selection then Clean Dental
     '1',
+    '',                                   // parent domain
     'abc', '012-345 6789',                // invalid WhatsApp then a local form (normalised)
     'nope', 'hello@drsmile.my',
     'Jalan Ampang, KL',
@@ -141,7 +143,7 @@ test('wizard: custom domain flow keeps the DNS mode question and staging host', 
 
 test('wizard: an empty business type is reported and re-asked; an empty library fails with guidance', async () => {
   const root = fakeLibrary();
-  const io = createScriptedIo(['', 'Auto Co', 'autoco', '', '1', '5', '2', '1', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', '']);
+  const io = createScriptedIo(['', 'Auto Co', 'autoco', '', '1', '5', '2', '1', '', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '', '']);
   const out = await wizard({}, env, { io, templatesRoot: root });
   assert.match(io.text, /\[WARN\] No templates found under .*automotive\/\. Choose another business type\./);
   assert.equal(out.template, 'pet-boarding/playful-01');
@@ -152,8 +154,10 @@ test('wizard: an empty business type is reported and re-asked; an empty library 
 test('wizard: values given on the command line are not asked again and --apply skips the mode question', async () => {
   const root = fakeLibrary();
   const io = createScriptedIo(['', '+60123456789', 'a@b.my', 'KL', '', '', '', '', '', '', '']);
-  const out = await wizard({ name: 'Given Co', slug: 'givenco', projectType: 'client', template: 'pet-boarding/modern-01', domainType: 'subdomain', apply: true }, env, { io, templatesRoot: root });
+  const out = await wizard({ name: 'Given Co', slug: 'givenco', projectType: 'client', template: 'pet-boarding/modern-01', domainType: 'subdomain', parentDomain: 'niagova.com', apply: true }, env, { io, templatesRoot: root });
   assert.doesNotMatch(io.text, /Available Business Types/);
+  assert.doesNotMatch(io.text, /Parent Domain\n/);
+  assert.match(io.text, /Domain: givenco\.niagova\.com/);
   assert.match(io.text, /\[INFO\] Mode: Apply \/ Provision \(--apply given on the command line\)/);
   assert.equal(out.apply, true);
   assert.equal(out.businessType, 'Pet Boarding');
@@ -163,16 +167,19 @@ test('wizard: demo selection uses demo identity and skips custom-domain choices'
   const root = fakeLibrary();
   const io = createScriptedIo([
     '2', 'Showcase Dental', 'showcase-dental', '', '3', '1',
+    '2',                                  // parent domain -> niagova.com
     '+60123456789', 'demo@example.my', 'Kuala Lumpur', '', '', '', '', '', '', '', '',
   ]);
   const out = await wizard({}, env, { io, templatesRoot: root });
   assert.match(io.text, /\[2\] Demo Website/);
   assert.match(io.text, /Demo Information/);
   assert.match(io.text, /Demo slug/);
-  assert.match(io.text, /Demo Domain: showcase-dental\.mybizgate\.com/);
+  assert.match(io.text, /Parent Domain\n\n\[1\] mybizgate\.com\n\[2\] niagova\.com\n/);
+  assert.match(io.text, /Demo Domain: demo-showcase-dental\.niagova\.com/);
   assert.doesNotMatch(io.text, /Domain Type\n/);
   assert.equal(out.projectType, 'demo');
   assert.equal(out.domainType, 'subdomain');
+  assert.equal(out.parentDomain, 'niagova.com');
 });
 
 test('slug suggestion is kebab-case and within limits', () => {
@@ -336,13 +343,13 @@ test('CLI mode: the documented non-interactive command still works as a dry run 
   const blank = await execFileAsync(bin, ['--name', 'Blank Co', '--slug', 'blank-cli-zz', '--template', 'blank', '--domain-type', 'subdomain', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
   assert.match(blank.stdout, /\[ OK \] Blank starter \(built-in\)/);
   assert.doesNotMatch(blank.stderr, /placeholder/);
-  const demo = await execFileAsync(bin, ['--name', 'Demo Co', '--slug', 'demo-cli-zz', '--project-type', 'demo', '--template', 'blank', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
+  const demo = await execFileAsync(bin, ['--name', 'Demo Co', '--slug', 'cli-zz', '--project-type', 'demo', '--template', 'blank', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
   assert.match(demo.stdout, /NEW DEMO SUMMARY/);
   assert.match(demo.stdout, /Project Type     : Demo Website/);
-  assert.match(demo.stdout, /GitHub Repo      : mybizgate\/demo-demo-cli-zz/);
-  assert.match(demo.stdout, /Hosting Directory: public_html\/demo\/demo-cli-zz\//);
-  assert.match(demo.stdout, /\[PLAN\] Create demo\/demo-demo-cli-zz\//);
-  assert.equal(fs.existsSync(naming.demoDir('demo-cli-zz')), false);
+  assert.match(demo.stdout, /GitHub Repo      : mybizgate\/demo-cli-zz/);
+  assert.match(demo.stdout, /Hosting Directory: public_html\/demo\/cli-zz\//);
+  assert.match(demo.stdout, /\[PLAN\] Create demo\/demo-cli-zz\//);
+  assert.equal(fs.existsSync(naming.demoDir('cli-zz')), false);
   const legacy = await execFileAsync(bin, ['--name', 'Legacy Co', '--slug', 'legacy-cli-zz', '--template', 'petgate', '--domain-type', 'subdomain', '--mock'], { env: cleanEnv({ [TEMPLATES_DIR_ENV_VAR]: root }), cwd: os.tmpdir() });
   assert.match(legacy.stderr, /deprecated/);
 });

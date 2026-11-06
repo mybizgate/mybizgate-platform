@@ -50,6 +50,17 @@ export async function checkDelegation(domain, nameservers) {
   return { domain, nameservers: Array.isArray(ns) ? ns : [], expected: want, state: ok ? 'DELEGATION OK' : 'WAITING FOR NAMESERVERS' };
 }
 
+/**
+ * Will a new subdomain resolve publicly? cPanel only writes to its own zone, so a parent domain
+ * whose nameservers are elsewhere needs the record to exist at that DNS provider first.
+ */
+export async function subdomainDnsStatus(host, { nameservers, expectedIp }) {
+  const delegation = await checkDelegation(host, nameservers);
+  if (delegation.state === 'DELEGATION OK') return { state: 'AUTOMATIC', nameservers: delegation.nameservers };
+  const a = await checkDns(host, expectedIp ? [expectedIp] : []);
+  return { state: a.state === 'DNS OK' ? 'RESOLVES' : 'UNRESOLVED', nameservers: delegation.nameservers };
+}
+
 export async function waitForDns(host, expectedIps, { timeoutMs = 20 * 60 * 1000, intervalMs = 30000 } = {}) {
   log.check(`DNS for ${host} (expecting ${expectedIps.join(', ') || 'any A record'})`);
   return poll({

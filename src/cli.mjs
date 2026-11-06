@@ -35,7 +35,7 @@ Commands:
   new-client [options]           Provision a client or demo website. Interactive wizard when no --name is given
                                  (dry run unless --apply; the wizard asks for the mode).
       --name "Business" --slug slug --template <business-type>/<template> [--project-type client|demo]
-      [--domain-type subdomain|custom]
+      [--domain-type subdomain|custom] [--parent-domain mybizgate.com|niagova.com]
       [--domain example.com.my] [--dns-mode awedns|external] [--visibility private|public]
       [--whatsapp +60123456789] [--email x@y.com] [--address "..."] [--phone ...] [--opening-hours "..."]
       [--facebook url|handle] [--instagram url|handle] [--tiktok url|handle] [--images /path/to/photos]
@@ -127,14 +127,23 @@ async function cmdDoctor(opts, env) {
     const d = await cpanel.listDomains();
     return { detail: `${env.cpanelUser}@${env.cpanelHost}: main ${d.main}, ${d.subdomains.length} subdomains, ${d.addons.length} addon domains` };
   });
-  await check(`DNS authority for ${env.baseDomain}`, async () => {
-    const ns = await resolveNs(env.baseDomain);
-    if (!Array.isArray(ns)) throw new PlatformError(`NS lookup failed: ${ns.error}`);
-    const ok = env.nameservers.every((n) => ns.includes(n));
-    if (!ok) return { warn: `nameservers are ${ns.join(', ')} (expected ${env.nameservers.join(', ')})` };
-    const ip = await hostingIp(env.baseDomain);
-    return { detail: `${ns.join(', ')} -> ${ip}` };
+  await check('Parent domains on cPanel', async () => {
+    const d = await cpanel.listDomains();
+    const missing = env.baseDomains.filter((b) => ![d.main, ...d.addons, ...d.parked].includes(b));
+    if (missing.length) throw new PlatformError(`not on the account: ${missing.join(', ')}`);
+    return { detail: env.baseDomains.join(', ') };
   });
+  for (const domain of env.baseDomains) {
+    // Only the hosting domain must be delegated; other parents can run on external DNS with a wildcard or A records.
+    await check(`DNS authority for ${domain}`, async () => {
+      const ns = await resolveNs(domain);
+      if (!Array.isArray(ns)) throw new PlatformError(`NS lookup failed: ${ns.error}`);
+      const ok = env.nameservers.every((n) => ns.includes(n));
+      if (!ok) return { warn: `nameservers are ${ns.join(', ')} (expected ${env.nameservers.join(', ')}); new subdomains need a wildcard or A record at that provider` };
+      const ip = await hostingIp(domain);
+      return { detail: `${ns.join(', ')} -> ${ip}` };
+    }, { required: domain === env.hostingDomain });
+  }
   await check('AutoSSL', async () => {
     if (!cpanel.configured) throw new PlatformError('cPanel not configured');
     const r = await cpanel.checkAutoSSL(env.baseDomain);
@@ -260,7 +269,7 @@ async function cmdNewClient(opts, env) {
   const { cpanel, github } = makeProviders(opts, env);
   const str = (v) => (typeof v === 'string' ? v : undefined);
   let input = {
-    name: str(opts.name), slug: str(opts.slug), projectType: str(opts.projectType), template: str(opts.template), domainType: str(opts.domainType), domain: str(opts.domain), dnsMode: str(opts.dnsMode),
+    name: str(opts.name), slug: str(opts.slug), projectType: str(opts.projectType), template: str(opts.template), domainType: str(opts.domainType), parentDomain: str(opts.parentDomain), domain: str(opts.domain), dnsMode: str(opts.dnsMode),
     visibility: str(opts.visibility), ftpAccount: str(opts.ftpAccount), dnsWaitMinutes: opts.dnsWait,
     whatsapp: str(opts.whatsapp), email: str(opts.email), address: str(opts.address), phone: str(opts.phone), openingHours: str(opts.openingHours),
     facebook: str(opts.facebook), instagram: str(opts.instagram), tiktok: str(opts.tiktok), images: str(opts.images),
@@ -341,11 +350,11 @@ async function cmdSiteStatus(opts, env) {
       const d = await cpanel.findDomain(h);
       log[d ? 'ok' : 'warn'](`cPanel ${h}: ${d ? `${d.kind} -> ${d.documentroot}` : 'not found'}`);
     }
-    if (cfg.hosting.ftp_account === 'dedicated') log.ok(`FTP ${naming.ftpLogin(cfg.client.slug, env)}: ${(await cpanel.ftpAccountExists(naming.ftpLogin(cfg.client.slug, env))) ? 'exists' : 'missing'}`);
+    if (cfg.hosting.ftp_account === 'dedicated') log.ok(`FTP ${naming.ftpLogin(cfg.client.slug, env, cfg.site.kind)}: ${(await cpanel.ftpAccountExists(naming.ftpLogin(cfg.client.slug, env, cfg.site.kind))) ? 'exists' : 'missing'}`);
     const ssl = await cpanel.checkAutoSSL(cfg.domain.primary);
     log[ssl.covered ? 'ok' : 'warn'](`AutoSSL ${cfg.domain.primary}: ${ssl.covered ? `covered until ${ssl.expires}` : 'not covered'}`);
   } else log.warn('cPanel: not configured (skipped)');
-  const ip = await hostingIp(env.baseDomain);
+  const ip = await hostingIp(env.hostingDomain);
   for (const h of [cfg.domain.primary, cfg.domain.staging].filter(Boolean)) {
     const d = await checkDns(h, ip ? [ip] : []);
     log[d.state === 'DNS OK' ? 'ok' : 'warn'](`DNS ${h}: ${d.state} (${d.resolved.join(', ') || d.error || 'no answer'})`);
@@ -374,8 +383,8 @@ async function cmdDnsInstructions(opts, env) {
   const slug = validateSlug(opts._[0]);
   const dir = naming.clientDir(slug);
   const cfg = loadSiteConfig(dir);
-  if (cfg.domain.type !== 'custom') throw new PlatformError(`${slug} uses a MyBizGate subdomain; no DNS instructions needed.`);
-  const ip = await hostingIp(env.baseDomain);
+  if (cfg.domain.type !== 'custom') throw new PlatformError(`${slug} uses a platform subdomain; no DNS instructions needed.`);
+  const ip = await hostingIp(env.hostingDomain);
   const text = dnsInstructions({ domain: cfg.domain.primary, ip: ip || 'unknown', mode: cfg.domain.dns_mode, nameservers: env.nameservers, stagingHost: cfg.domain.staging, slug });
   fs.writeFileSync(path.join(dir, 'dns-instructions.txt'), text);
   log.raw(text);

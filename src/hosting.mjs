@@ -19,13 +19,13 @@ export function hostingPlan(cfg, env = loadEnv()) {
     if (cfg.domain.dns_mode === 'awedns') steps.push({ id: 'delegation', text: `Wait for ${cfg.domain.primary} nameservers -> ${env.nameservers.join(', ')}` });
     else steps.push({ id: 'external-dns', text: `Generate dns-instructions.txt and wait for ${cfg.domain.primary} A record` });
   }
-  if (cfg.hosting.ftp_account === 'dedicated') steps.push({ id: 'ftp', text: `Create dedicated FTP account ${naming.ftpLogin(slug, env)} restricted to ${dir}` });
+  if (cfg.hosting.ftp_account === 'dedicated') steps.push({ id: 'ftp', text: `Create dedicated FTP account ${naming.ftpLogin(slug, env, cfg.site.kind)} restricted to ${dir}` });
   else steps.push({ id: 'ftp-shared', text: 'Use shared deployment FTP credential (FTP_USERNAME/FTP_PASSWORD from environment)' });
   steps.push({ id: 'autossl', text: `Ensure AutoSSL covers ${cfg.domain.staging || cfg.domain.primary}` });
   return steps;
 }
 
-export async function ensureSubdomain(provider, { host, label, dir, apply }) {
+export async function ensureSubdomain(provider, { host, dir, apply }) {
   log.check(`Subdomain ${host}`);
   const existing = await provider.findDomain(host);
   if (existing) {
@@ -37,7 +37,7 @@ export async function ensureSubdomain(provider, { host, label, dir, apply }) {
     return { created: false, host };
   }
   if (!apply) { log.dry(`Would create subdomain ${host} -> ${dir}`); return { created: false, host, dryRun: true }; }
-  const r = await provider.createSubdomain({ label, dir });
+  const r = await provider.createSubdomain({ ...naming.splitHost(host), dir });
   const verify = await provider.domainExists(host);
   if (!verify) throw new PlatformError(`Subdomain ${host} was not listed after creation.`, { code: 'DOMAIN_VERIFY' });
   log.ok(`Subdomain ${host} created (${r.api}) -> ${dir}`);
@@ -68,9 +68,9 @@ export async function ensureCustomDomain(provider, { domain, label, dir, apply }
  * Returns credentials (password only when newly generated/rotated) so the caller can
  * store them as GitHub secrets. Falls back to the shared credential when unsupported.
  */
-export async function ensureDedicatedFtp(provider, { slug, dir, apply, env = loadEnv() }) {
-  const user = naming.ftpUser(slug);
-  const login = naming.ftpLogin(slug, env);
+export async function ensureDedicatedFtp(provider, { slug, kind = 'client', dir, apply, env = loadEnv() }) {
+  const user = naming.ftpUser(slug, kind);
+  const login = naming.ftpLogin(slug, env, kind);
   log.check(`Dedicated FTP account ${login} -> ${dir}`);
   let exists = false;
   try { exists = await provider.ftpAccountExists(login); } catch (err) { log.warn(`Could not list FTP accounts: ${err.message}`); }

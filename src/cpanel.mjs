@@ -3,6 +3,7 @@
 // (addon-domain management, subdomain removal) are isolated in this file.
 import { PlatformError, registerSecret, redact } from './utils.mjs';
 import { loadEnv } from './config.mjs';
+import { subdomainDnsStatus } from './dns.mjs';
 
 export class CPanelProvider {
   constructor(env = loadEnv(), { fetchImpl = globalThis.fetch } = {}) {
@@ -11,6 +12,7 @@ export class CPanelProvider {
     this.token = env.cpanelToken;
     this.port = env.cpanelPort || 2083;
     this.baseDomain = env.baseDomain;
+    this.hostingDomain = env.hostingDomain;
     this.fetch = fetchImpl;
     if (this.token) registerSecret(this.token);
   }
@@ -114,8 +116,10 @@ export class CPanelProvider {
     return (main && (main.ip || main.ipv4)) || null;
   }
 
+  async subdomainDnsStatus(host, opts) { return subdomainDnsStatus(host, opts); }
+
   /**
-   * Create a MyBizGate subdomain pointing at a document root (relative to the account home).
+   * Create a subdomain of the account's main domain or an addon domain, pointing at a document root (relative to the account home).
    * Tries UAPI first, then falls back to API 2 if the host does not expose the UAPI function.
    */
   async createSubdomain({ label, rootDomain = this.baseDomain, dir }) {
@@ -148,7 +152,7 @@ export class CPanelProvider {
   /** Remove a custom (addon) domain. Callers must obtain explicit confirmation first. */
   async removeCustomDomain({ domain, label }) {
     const found = await this.findDomain(domain);
-    const sub = (found && found.subdomain) || `${label}.${this.baseDomain}`;
+    const sub = (found && found.subdomain) || `${label}.${this.hostingDomain}`;
     await this.api2('AddonDomain', 'deladdondomain', { domain, subdomain: sub });
     return { api: 'api2', domain };
   }
@@ -169,7 +173,7 @@ export class CPanelProvider {
   async createFtpAccount({ user, password, homedir, quota = 0 }) {
     registerSecret(password);
     await this.uapi('Ftp', 'add_ftp', { user, pass: password, homedir: homedir.replace(/\/$/, ''), quota }, { method: 'POST' });
-    return { user, login: `${user}@${this.baseDomain}`, homedir };
+    return { user, login: `${user}@${this.hostingDomain}`, homedir };
   }
 
   async setFtpPassword({ user, password }) {
@@ -230,9 +234,11 @@ export class CPanelProvider {
 
 /** In-memory mock used by unit tests and by `--mock` runs. */
 export class MockCPanelProvider {
-  constructor({ domains = ['mybizgate.com'], subdomains = [], addons = [], ftp = [], ssl = [], files = {} } = {}) {
+  constructor({ domains = ['mybizgate.com'], subdomains = [], addons = ['niagova.com'], ftp = [], ssl = [], files = {}, undelegated = [] } = {}) {
     this.state = { main: domains[0], subdomains: [...subdomains], addons: [...addons], ftp: [...ftp], ssl: [...ssl], files, calls: [] };
     this.baseDomain = domains[0];
+    this.hostingDomain = domains[0];
+    this.undelegated = undelegated;
   }
   get configured() { return true; }
   requireConfigured() {}
@@ -241,13 +247,14 @@ export class MockCPanelProvider {
   async findDomain(host) { return (await this.domainsData()).find((d) => d.domain === host) || null; }
   async domainExists(host) { const d = await this.listDomains(); return [d.main, ...d.subdomains, ...d.addons].includes(host); }
   async serverIp() { return '203.0.113.10'; }
+  async subdomainDnsStatus(host) { return this.undelegated.some((d) => host.endsWith(`.${d}`)) ? { state: 'UNRESOLVED', nameservers: ['ns.example.net'] } : { state: 'AUTOMATIC', nameservers: ['ns1.awedns.com', 'ns2.awedns.com'] }; }
   async createSubdomain({ label, rootDomain = this.baseDomain, dir }) { this.state.calls.push(['createSubdomain', label, dir]); this.state.subdomains.push(`${label}.${rootDomain}`); return { api: 'mock', host: `${label}.${rootDomain}` }; }
   async removeSubdomain(host) { this.state.calls.push(['removeSubdomain', host]); this.state.subdomains = this.state.subdomains.filter((d) => d !== host); }
   async addCustomDomain({ domain, dir }) { this.state.calls.push(['addCustomDomain', domain, dir]); this.state.addons.push(domain); return { api: 'mock', domain, dir }; }
   async removeCustomDomain({ domain }) { this.state.calls.push(['removeCustomDomain', domain]); this.state.addons = this.state.addons.filter((d) => d !== domain); }
   async listFtpAccounts() { return this.state.ftp; }
   async ftpAccountExists(login) { return this.state.ftp.some((a) => a.user === login || a.user === login.split('@')[0]); }
-  async createFtpAccount({ user, homedir }) { this.state.calls.push(['createFtpAccount', user, homedir]); this.state.ftp.push({ user: `${user}@${this.baseDomain}`, type: 'sub', homedir }); return { user, login: `${user}@${this.baseDomain}`, homedir }; }
+  async createFtpAccount({ user, homedir }) { this.state.calls.push(['createFtpAccount', user, homedir]); this.state.ftp.push({ user: `${user}@${this.hostingDomain}`, type: 'sub', homedir }); return { user, login: `${user}@${this.hostingDomain}`, homedir }; }
   async setFtpPassword({ user }) { this.state.calls.push(['setFtpPassword', user]); return { user }; }
   async deleteFtpAccount({ user }) { this.state.calls.push(['deleteFtpAccount', user]); }
   async checkAutoSSL(host) { return { covered: this.state.ssl.includes(host), expires: null, issuer: 'mock', inProgress: false, problems: [] }; }

@@ -11,8 +11,8 @@ import path from 'node:path';
 import * as yaml from 'js-yaml';
 import { log, PlatformError, exists, readJson, writeJson, commandExists } from './utils.mjs';
 import {
-  loadEnv, naming, validateSlug, validateBusinessName, validateDomainType, validateDnsMode, validateVisibility,
-  validateCustomDomain, validateProjectType, buildSiteConfig, serializeSiteConfig, loadSiteConfig, DOMAIN_TYPES, DNS_MODES, VISIBILITIES,
+  loadEnv, naming, validateSlug, validateProjectSlug, validateBusinessName, validateDomainType, validateDnsMode, validateVisibility,
+  validateCustomDomain, validateParentDomain, validateProjectType, buildSiteConfig, serializeSiteConfig, loadSiteConfig, DOMAIN_TYPES, DNS_MODES, VISIBILITIES,
   WORKSPACE_DIR, PLATFORM_DIR, SITE_CONFIG_FILE, validateSiteConfig, validatePlatformRef, PLATFORM_VERSION,
   BUSINESS_FIELDS, normalizeWhatsapp, validateEmail, validateFreeText, validatePhone, validateSocial, normalizeBusinessInfo, validateImagesFolder,
 } from './config.mjs';
@@ -38,7 +38,7 @@ const COPY_EXCLUDES = ['.git', 'dist', 'node_modules', '.github', '.ftp-deploy-s
 export const WIZARD_TITLE = 'MyBizgate - Multi Tenancy SaaS Wizard';
 const RULE = '='.repeat(56);
 const THIN_RULE = '-'.repeat(56);
-export const DOMAIN_TYPE_LABELS = { subdomain: 'MyBizGate Subdomain', custom: 'Client Custom Domain' };
+export const DOMAIN_TYPE_LABELS = { subdomain: 'Subdomain', custom: 'New Domain (client custom domain)' };
 export const PROJECT_TYPE_LABELS = { client: 'Client Website', demo: 'Demo Website' };
 const DNS_MODE_LABELS = { external: 'External DNS (client keeps their nameservers; A-record instructions are generated)', awedns: 'AweDNS nameservers (client points the domain at ns1/ns2.awedns.com)' };
 export const MODES = [{ id: 'dry-run', label: 'Dry Run' }, { id: 'apply', label: 'Apply / Provision' }];
@@ -109,10 +109,10 @@ export async function wizard(initial = {}, env = loadEnv(), { io = createConsole
     if (!out.name) out.name = await askText('Business Name', { validate: validateBusinessName });
     else { say(`Business Name: ${out.name}`); say(''); }
     if (!out.slug) {
-      const suggested = suggestSlug(out.name);
+      const suggested = isDemo ? suggestSlug(out.name).replace(/^demo-/, '') : suggestSlug(out.name);
       say('Suggested slug:'); say(suggested || '(none)'); say('');
-      out.slug = await askText(isDemo ? 'Demo slug' : 'Client slug', { def: suggested, validate: validateSlug, hint: suggested ? 'Enter to accept the suggestion' : 'lowercase letters, digits and hyphens' });
-    } else { validateSlug(out.slug); say(`${isDemo ? 'Demo' : 'Client'} slug: ${out.slug}`); say(''); }
+      out.slug = await askText(isDemo ? 'Demo slug' : 'Client slug', { def: suggested, validate: (v) => validateProjectSlug(v, out.projectType), hint: suggested ? 'Enter to accept the suggestion' : 'lowercase letters, digits and hyphens' });
+    } else { validateProjectSlug(out.slug, out.projectType); say(`${isDemo ? 'Demo' : 'Client'} slug: ${out.slug}`); say(''); }
     if (!out.shortName) {
       const derived = deriveShortName(out.name);
       out.shortName = await askText('Short name shown in menus and WhatsApp greetings', { def: derived, optional: true, validate: (v) => validateFreeText(v, { label: 'Short name', max: 60 }), hint: `Enter for "${derived}"` });
@@ -145,21 +145,29 @@ export async function wizard(initial = {}, env = loadEnv(), { io = createConsole
     out.businessType = template.categoryName;
 
     // ---- Domain -------------------------------------------------------------
+    const askParentDomain = async () => {
+      if (out.parentDomain) return validateParentDomain(out.parentDomain, env);
+      if (env.baseDomains.length === 1) return env.baseDomains[0];
+      const p = await askMenu('Parent Domain', env.baseDomains.map((d) => ({ id: d, label: d })), { def: env.baseDomains.indexOf(env.baseDomain) + 1 });
+      return p.id;
+    };
     if (isDemo) {
-      if (out.domainType && out.domainType !== 'subdomain') throw new PlatformError('Demo projects support the MyBizGate subdomain only.', { code: 'INVALID_DOMAIN_TYPE' });
+      if (out.domainType && out.domainType !== 'subdomain') throw new PlatformError('Demo projects support a subdomain only.', { code: 'INVALID_DOMAIN_TYPE' });
       out.domainType = 'subdomain';
-      say(`Demo Domain: ${naming.subdomainHost(out.slug, env)}`); say('');
+      out.parentDomain = await askParentDomain();
+      say(`Demo Domain: ${naming.demoHost(out.slug, env, out.parentDomain)}`); say('');
     } else if (!out.domainType) {
       const d = await askMenu('Domain Type', DOMAIN_TYPES.map((t, i) => ({ id: t, label: DOMAIN_TYPE_LABELS[t] })), { def: 1 });
       out.domainType = d.id;
     } else validateDomainType(out.domainType);
     if (!isDemo && out.domainType === 'subdomain') {
-      say(`Domain: ${naming.subdomainHost(out.slug, env)}`); say('');
+      out.parentDomain = await askParentDomain();
+      say(`Domain: ${naming.subdomainHost(out.slug, env, out.parentDomain)}`); say('');
     } else if (!isDemo) {
       if (!out.domain) out.domain = await askText('Custom domain', { validate: (v) => validateCustomDomain(v, env), hint: 'e.g. pawhaven.com.my' });
       if (!out.dnsMode) { const m = await askMenu('DNS Mode', ['external', 'awedns'].filter((t) => DNS_MODES.includes(t)).map((t) => ({ id: t, label: DNS_MODE_LABELS[t] })), { def: 1 }); out.dnsMode = m.id; }
       else validateDnsMode(out.dnsMode);
-      say(`Domain: ${out.domain} (staging: ${naming.stagingHost(out.slug, env)}, dns_mode=${out.dnsMode})`); say('');
+      say(`Domain: ${out.domain} (staging: ${naming.stagingHost(out.slug, env, out.parentDomain)}, dns_mode=${out.dnsMode})`); say('');
     }
     if (out.visibility) validateVisibility(out.visibility);
 
@@ -240,11 +248,12 @@ function resolveProvisioningDir(slug, projectType) {
 // ---------------------------------------------------------------------------
 export function normalizeInput(input, env = loadEnv(), { templatesRoot = templatesDir(), requireContact = false } = {}) {
   const name = validateBusinessName(input.name);
-  const slug = validateSlug(input.slug);
   const projectType = validateProjectType(input.projectType || 'client');
+  const slug = validateProjectSlug(input.slug, projectType);
   const templateRecord = resolveTemplate(input.template || BLANK_TEMPLATE, { root: templatesRoot });
   const domainType = validateDomainType(input.domainType || 'subdomain');
-  if (projectType === 'demo' && domainType !== 'subdomain') throw new PlatformError('Demo projects support the MyBizGate subdomain only.', { code: 'INVALID_DOMAIN_TYPE' });
+  if (projectType === 'demo' && domainType !== 'subdomain') throw new PlatformError('Demo projects support a subdomain only.', { code: 'INVALID_DOMAIN_TYPE' });
+  const parentDomain = input.parentDomain ? validateParentDomain(input.parentDomain, env) : env.baseDomain;
   const visibility = validateVisibility(input.visibility || (projectType === 'demo' ? 'public' : 'private'));
   let customDomain; let dnsMode;
   if (domainType === 'custom') {
@@ -257,7 +266,7 @@ export function normalizeInput(input, env = loadEnv(), { templatesRoot = templat
   const platformRef = validatePlatformRef(input.platformRef || env.platformRef);
   return {
     name, slug, projectType, template: templateRecord.ref, templateRecord, templateVersion: templateRecord.version, businessType: input.businessType || templateRecord.categoryName,
-    domainType, visibility, customDomain, dnsMode, ftpAccount, business, businessNotes: notes, platformRef,
+    domainType, parentDomain, visibility, customDomain, dnsMode, ftpAccount, business, businessNotes: notes, platformRef,
     // Local-only input: kept out of site.config.yml on purpose (machine path).
     images, local: { images_source: images.path },
   };
@@ -328,6 +337,7 @@ export function clientSummary(cfg, env = loadEnv(), { template, businessType, ap
   if (cfg.domain.staging) lines.push(row('Staging', cfg.domain.staging));
   if (cfg.domain.dns_mode) lines.push(row('DNS Mode', cfg.domain.dns_mode));
   lines.push(row('GitHub Repo', `${env.githubOwner}/${cfg.github.repo}`));
+  lines.push(row('Local Folder', naming.projectDir(cfg.site.kind, cfg.client.slug)));
   lines.push(row('Hosting Directory', cfg.hosting.deploy_dir));
   const b = cfg.business || {};
   lines.push(row('WhatsApp', b.whatsapp || '(not set)'));
@@ -524,6 +534,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   } else log.warn('skipped (gh not authenticated)');
 
   const hosts = [cfg.domain.primary, cfg.domain.staging].filter(Boolean);
+  let dnsProblem = null;
   if (cpanel.configured) {
     for (const h of hosts) {
       log.check(`cPanel domain ${h}`);
@@ -537,6 +548,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
     log.check(`Hosting directory ${cfg.hosting.deploy_dir}`);
     const dirExists = await cpanel.dirExists(cfg.hosting.deploy_dir.replace(/\/$/, ''));
     log.ok(dirExists ? 'exists (will be reused)' : 'does not exist yet (created with the domain)');
+    dnsProblem = await checkParentDomain(cfg.domain.staging || cfg.domain.primary, { cpanel, env });
   }
 
   // ---- Summary + plan ---------------------------------------------------------
@@ -569,8 +581,9 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
     if (templateBlocked) for (const line of PLACEHOLDER_STOP_LINES) log.warn(line);
     if (contentBlocked) log.warn(`Apply would stop: template requires ${missingContent.join(', ')}.`);
     if (residueBlocked) log.warn('Apply would stop before creating production resources: source-template branding remains.');
+    if (dnsProblem) { log.warn(`Apply would stop: ${dnsProblem.message}`); log.info(dnsProblem.hint); }
     log.dry('Dry run only. Nothing was created. Re-run with --apply to provision.');
-    return { cfg, clientDir, dryRun: true, template: tpl, templateBlocked, contentBlocked, residueBlocked, preflight };
+    return { cfg, clientDir, dryRun: true, template: tpl, templateBlocked, contentBlocked, residueBlocked, dnsProblem, preflight };
   }
   // Never create production resources from an empty or badly personalised template.
   if (templateBlocked) {
@@ -578,6 +591,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   }
   if (contentBlocked) throw new PlatformError(`Template ${tpl.ref} requires: ${missingContent.join(', ')}.`, { code: 'TEMPLATE_CONTENT_MISSING', hint: 'Provide the missing business information (wizard or --whatsapp/--address/...). Nothing was created.' });
   if (residueBlocked) throw new PlatformError(`Template personalisation incomplete\n${formatResidue(preflight.residue.findings).join('\n')}`, { code: 'TEMPLATE_RESIDUE', hint: 'Fix the template or the client information. Nothing was created.' });
+  if (dnsProblem) throw new PlatformError(dnsProblem.message, { code: 'PARENT_DOMAIN_NOT_READY', hint: `${dnsProblem.hint} Provisioning stopped before making any change.` });
   if (!yes) {
     if (!io && !process.stdin.isTTY) throw new PlatformError('Confirmation required but no interactive terminal is available.', { hint: 'Re-run with --yes to skip the confirmation in automation.' });
     if (!(await confirm('Proceed with provisioning?', { io }))) { log.info('Aborted by user. Nothing was created.'); return { cfg, clientDir, aborted: true }; }
@@ -639,10 +653,10 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   // ---- 5. Hosting ------------------------------------------------------------------
   log.step('Hosting');
   if (cfg.domain.type === 'subdomain') {
-    await ensureSubdomain(cpanel, { host: cfg.domain.primary, label: slug, dir: cfg.hosting.deploy_dir, apply: true });
+    await ensureSubdomain(cpanel, { host: cfg.domain.primary, dir: cfg.hosting.deploy_dir, apply: true });
     mark('subdomain', { host: cfg.domain.primary });
   } else {
-    await ensureSubdomain(cpanel, { host: cfg.domain.staging, label: `stg-${slug}`, dir: cfg.hosting.deploy_dir, apply: true });
+    await ensureSubdomain(cpanel, { host: cfg.domain.staging, dir: cfg.hosting.deploy_dir, apply: true });
     mark('staging', { host: cfg.domain.staging });
     await ensureCustomDomain(cpanel, { domain: cfg.domain.primary, label: slug, dir: cfg.hosting.deploy_dir, apply: true });
     mark('custom-domain', { domain: cfg.domain.primary });
@@ -650,7 +664,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   let ftp;
   if (cfg.hosting.ftp_account === 'dedicated') {
     if (done('ftp') && done('secrets')) { ftp = { mode: steps.ftp.mode, login: steps.ftp.login, reuse: true }; log.skip(`FTP account ${ftp.login} already configured`); }
-    else { ftp = await ensureDedicatedFtp(cpanel, { slug, dir: cfg.hosting.deploy_dir, apply: true, env }); mark('ftp', { mode: ftp.mode, login: ftp.login, fallback: Boolean(ftp.fallback) }); }
+    else { ftp = await ensureDedicatedFtp(cpanel, { slug, kind: cfg.site.kind, dir: cfg.hosting.deploy_dir, apply: true, env }); mark('ftp', { mode: ftp.mode, login: ftp.login, fallback: Boolean(ftp.fallback) }); }
   } else {
     ftp = sharedFtp(env);
     if (ftp.missing) throw new PlatformError('hosting.ftp_account=shared requires FTP_USERNAME and FTP_PASSWORD in the environment.');
@@ -692,7 +706,7 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   mark('deploy', { run: runInfo && runInfo.url });
 
   // ---- 9. DNS / SSL / health ---------------------------------------------------------------------
-  const ip = (await cpanel.serverIp()) || (await hostingIp(env.baseDomain));
+  const ip = (await cpanel.serverIp()) || (await hostingIp(env.hostingDomain));
   const results = { build: 'PASS', deployment: 'PASS', dns: 'PENDING', ssl: 'PENDING', health: 'PENDING' };
   const verifyHost = async (host, { identity }) => {
     await waitForDns(host, ip ? [ip] : [], { timeoutMs: 10 * 60 * 1000, intervalMs: 20000 });
@@ -755,6 +769,25 @@ export async function newClient(rawInput, { env = loadEnv(), cpanel, github, app
   return { cfg, clientDir, results };
 }
 
+// The subdomain only goes live if its parent is on the cPanel account and public DNS will answer.
+// Returns a problem to report, or null when the host is good to go.
+async function checkParentDomain(host, { cpanel, env }) {
+  const { rootDomain: parent } = naming.splitHost(host);
+  log.check(`Parent domain ${parent}`);
+  if (!(await cpanel.domainExists(parent))) {
+    const message = `${parent} is not on the cPanel account.`;
+    log.fail(message);
+    return { message, hint: `Add ${parent} as an addon domain in cPanel, then re-run.` };
+  }
+  const ip = await cpanel.serverIp();
+  const dns = await cpanel.subdomainDnsStatus(host, { nameservers: env.nameservers, expectedIp: ip });
+  if (dns.state === 'AUTOMATIC') { log.ok(`on the cPanel account; DNS is automatic (${env.nameservers.join(', ')})`); return null; }
+  if (dns.state === 'RESOLVES') { log.ok(`${host} already resolves to this server (${dns.nameservers.join(', ') || 'external DNS'})`); return null; }
+  const message = `${host} will not resolve: ${parent} uses ${dns.nameservers.join(', ') || 'unknown nameservers'}, not ${env.nameservers.join(', ')}.`;
+  log.warn(message);
+  return { message, hint: `Point ${parent} at ${env.nameservers.join(' and ')} (one-time), or add an A record ${host} -> ${ip} or *.${parent} -> ${ip} at its DNS provider, then re-run.` };
+}
+
 async function promoteCustomDomain(cfg, clientDir, { github, repo }) {
   // The shared workflow builds staging (noindex) while site.environment=staging; switch it to production.
   const cfgPath = path.join(clientDir, SITE_CONFIG_FILE);
@@ -776,7 +809,8 @@ async function promoteCustomDomain(cfg, clientDir, { github, repo }) {
 export function printSummary(cfg, clientDir, env, results, { waiting = false, slug } = {}) {
   const lines = [];
   lines.push('');
-  lines.push(waiting ? 'CLIENT CREATED (WAITING FOR DNS)' : 'CLIENT CREATED');
+  const title = `${cfg.site.kind === 'demo' ? 'DEMO' : 'CLIENT'} CREATED`;
+  lines.push(waiting ? `${title} (WAITING FOR DNS)` : title);
   lines.push('');
   const row = (k, v) => { lines.push(`${k}:`); lines.push(`${v}`); lines.push(''); };
   row('Business', cfg.client.name);

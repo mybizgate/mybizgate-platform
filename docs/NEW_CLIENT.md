@@ -23,8 +23,9 @@ The wizard asks, in order:
 3. **Available Business Types** - the first-level folders of `templates/`, shown as `[1] Automotive`, `[2] Beauty`, ...
 4. **<Business Type> Templates** - the folders under the chosen type (`[1] Modern 01`, ...). The internal
    reference stays `pet-boarding/modern-01`; the display name comes from `template.yml` `name:` or the folder name.
-5. **Domain** - clients choose a MyBizGate subdomain or custom domain. Demos use `<slug>.mybizgate.com` and skip
-   the custom-domain questions.
+5. **Domain** - clients choose `[1] Subdomain` or `[2] New Domain`. A subdomain then asks for the **Parent Domain**
+   (`mybizgate.com` or `niagova.com`) and becomes `<slug>.<parent>`. Demos always use a subdomain: they only ask
+   for the parent and become `demo-<slug>.<parent>`.
 6. **Business Information** - WhatsApp, Email, Address (required); Phone, Opening Hours, Facebook, Instagram,
    TikTok (optional, Enter to skip). WhatsApp is normalised to E.164 and every change is announced with `[INFO]`.
 7. **Project Images** - optional folder of photos (`[INFO] No client image folder supplied.` when blank).
@@ -32,7 +33,7 @@ The wizard asks, in order:
 8. **Mode** - `[1] Dry Run` (default) or `[2] Apply / Provision`.
 
 Then the usual `[CHECK]` lines run (dependencies, environment, template, local folder, GitHub repository,
-cPanel domain, hosting directory), the **NEW CLIENT SUMMARY** or **NEW DEMO SUMMARY** block and the `[PLAN]` are printed, and:
+cPanel domain, hosting directory, parent domain), the **NEW CLIENT SUMMARY** or **NEW DEMO SUMMARY** block and the `[PLAN]` are printed, and:
 
 - Dry Run ends with `[DRY ] Dry run only. Nothing was created.`
 - Apply asks `Proceed with provisioning? [y/N]:` - the default is **No**; only `y`/`yes` continues.
@@ -45,8 +46,11 @@ cPanel domain, hosting directory), the **NEW CLIENT SUMMARY** or **NEW DEMO SUMM
   --slug pawhaven \
   --template pet-boarding/modern-01 \
   --domain-type subdomain \
+  --parent-domain niagova.com \
   --apply
 ```
+
+`--parent-domain` defaults to `mybizgate.com`.
 
 Optional: `--whatsapp +60123456789 --email hello@pawhaven.com --address "Kuala Lumpur" --phone ... --opening-hours "..."
 --facebook ... --instagram ... --tiktok ... --images /path/to/photos --project-type client|demo --visibility private|public --ftp-account dedicated|shared
@@ -56,12 +60,23 @@ legacy demo names (`petgate`, ...) are still accepted but deprecated.
 Demo project:
 
 ```bash
-./platform/bin/new-client.sh --name "Paw Haven Demo" --slug pawhaven-demo --project-type demo \
-  --template pet-boarding/modern-01 --apply
+./platform/bin/new-client.sh --name "Paw Haven Demo" --slug pawhaven --project-type demo \
+  --parent-domain mybizgate.com --template pet-boarding/modern-01 --apply
 ```
 
-The demo convention is local folder `demo/demo-<slug>/`, GitHub repository `demo-<slug>` (public), a dedicated FTP account,
-and deployment directory `public_html/demo/<slug>/`. The older Gate products remain independent repositories at
+## What you end up with
+
+| | Client (slug `lzhub`) | Demo (slug `lzhub`) |
+| --- | --- | --- |
+| GitHub repository | `mybizgate/client-lzhub` (private) | `mybizgate/demo-lzhub` (public) |
+| Local folder | `clients/client-lzhub/` | `demo/demo-lzhub/` |
+| Hosting folder | `public_html/clients/lzhub/` | `public_html/demo/lzhub/` |
+| Domain | `lzhub.<parent>` or the new domain | `demo-lzhub.<parent>` |
+| FTP login | `deploy-lzhub@mybizgate.com` | `deploy-demo-lzhub@mybizgate.com` |
+
+A client and a demo may share a slug. Enter a demo slug without the `demo-` prefix; it is added automatically and a
+slug that already starts with `demo-` is refused. FTP logins always use the cPanel main domain, whichever parent the site uses.
+The older Gate products remain independent repositories at
 `public_html/site-<slug>/` and are not moved by this option.
 
 Custom domain:
@@ -143,7 +158,8 @@ The photos folder asked by the wizard (`--images`) is a machine path. It is writ
 stays portable and no local path ever reaches GitHub.
 
 Before anything is created the command validates: local project folder free, GitHub repo free, domain free,
-hosting directory free, template exists and is usable, environment (`CPANEL_TOKEN`) available, GitHub authentication available.
+hosting directory free, template exists and is usable, environment (`CPANEL_TOKEN`) available, GitHub authentication available,
+parent domain on the cPanel account and able to resolve the new subdomain (see [DOMAIN_MODES.md](DOMAIN_MODES.md)).
 
 If a step fails the command stops and reports what exists. Fix the cause and continue with:
 

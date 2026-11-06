@@ -28,7 +28,7 @@ export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 export const RESERVED_SLUGS = new Set([
   'www', 'mail', 'ftp', 'cpanel', 'webmail', 'webdisk', 'whm', 'ns1', 'ns2', 'api', 'admin', 'autodiscover',
-  'autoconfig', 'cpcontacts', 'cpcalendars', 'localhost', 'mybizgate', 'site', 'clients', 'client', 'demo', 'stg', 'staging',
+  'autoconfig', 'cpcontacts', 'cpcalendars', 'localhost', 'mybizgate', 'niagova', 'site', 'clients', 'client', 'demo', 'stg', 'staging',
   'petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate',
 ]);
 
@@ -48,10 +48,16 @@ export const CORPORATE_REPO = 'niagova-site';
 export const CORPORATE_DEPLOY_DIRS = ['public_html/', `public_html/${CORPORATE_REPO}/`];
 export const DEMO_SITES = ['petgate', 'autogate', 'beautygate', 'dentalgate', 'supplygate'];
 
+const DEFAULT_BASE_DOMAINS = 'mybizgate.com,niagova.com';
+
 // ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
 export function loadEnv(env = process.env) {
+  // Parent domains offered for subdomains. The first one is the default unless MYBIZGATE_BASE_DOMAIN says otherwise.
+  const baseDomains = (env.MYBIZGATE_BASE_DOMAINS || DEFAULT_BASE_DOMAINS).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const baseDomain = env.MYBIZGATE_BASE_DOMAIN || baseDomains[0];
+  if (!baseDomains.includes(baseDomain)) baseDomains.unshift(baseDomain);
   const cfg = {
     cpanelHost: env.CPANEL_HOST || 'baboon.awedns.com',
     cpanelUser: env.CPANEL_USER || 'mybizgat',
@@ -64,7 +70,10 @@ export function loadEnv(env = process.env) {
     githubSshHost: env.GITHUB_SSH_HOST || 'github-mybizgate',
     platformRepo: env.MYBIZGATE_PLATFORM_REPO || 'mybizgate-platform',
     platformRef: env.MYBIZGATE_PLATFORM_REF || PLATFORM_RELEASE_REF,
-    baseDomain: env.MYBIZGATE_BASE_DOMAIN || 'mybizgate.com',
+    baseDomain,
+    baseDomains,
+    // The cPanel account's main domain. FTP logins and addon helpers live here whatever the site's domain is.
+    hostingDomain: env.MYBIZGATE_HOSTING_DOMAIN || 'mybizgate.com',
     nameservers: (env.MYBIZGATE_NAMESERVERS || 'ns1.awedns.com,ns2.awedns.com').split(',').map((s) => s.trim()).filter(Boolean),
     ghConfigDir: env.MYBIZGATE_GH_CONFIG_DIR || path.join(env.HOME || '', '.config', 'gh-mybizgate'),
     ghToken: env.MYBIZGATE_GH_TOKEN || '',
@@ -104,10 +113,24 @@ export function validateHostname(host, { label = 'Domain' } = {}) {
 
 export function validateCustomDomain(host, env = loadEnv()) {
   const h = validateHostname(host, { label: 'Custom domain' });
-  if (h === env.baseDomain || h.endsWith(`.${env.baseDomain}`)) {
-    throw new PlatformError(`Custom domain "${h}" is inside ${env.baseDomain}; use domain type "subdomain" instead.`, { code: 'INVALID_DOMAIN' });
-  }
+  const parent = [...env.baseDomains, env.hostingDomain].find((d) => h === d || h.endsWith(`.${d}`));
+  if (parent) throw new PlatformError(`Custom domain "${h}" is inside ${parent}; use domain type "subdomain" instead.`, { code: 'INVALID_DOMAIN' });
   return h;
+}
+
+export function validateParentDomain(domain, env = loadEnv()) {
+  const h = validateHostname(domain, { label: 'Parent domain' });
+  if (!env.baseDomains.includes(h)) throw new PlatformError(`Unknown parent domain "${domain}". Choose one of: ${env.baseDomains.join(', ')}.`, { code: 'INVALID_DOMAIN' });
+  return h;
+}
+
+// The "demo-" prefix belongs to the repo, folder and hostname, never to the slug itself.
+export function validateProjectSlug(slug, kind = 'client') {
+  const s = validateSlug(slug);
+  if (kind === 'demo' && s.startsWith('demo-')) {
+    throw new PlatformError(`Demo slug "${s}" must not start with "demo-"; the prefix is added automatically (use "${s.slice(5)}").`, { code: 'INVALID_SLUG' });
+  }
+  return s;
 }
 
 export function validateBusinessName(name) {
@@ -338,10 +361,14 @@ export const naming = {
   legacyDemoDeployDir: (slug) => `public_html/site-${slug}/`,
   projectRepoName: (kind, slug) => kind === 'demo' ? `demo-${slug}` : `client-${slug}`,
   projectDir: (kind, slug) => kind === 'demo' ? path.join(DEMOS_DIR, `demo-${slug}`) : path.join(CLIENTS_DIR, `client-${slug}`),
-  subdomainHost: (slug, env = loadEnv()) => `${slug}.${env.baseDomain}`,
-  stagingHost: (slug, env = loadEnv()) => `stg-${slug}.${env.baseDomain}`,
-  ftpUser: (slug) => `deploy-${slug}`,
-  ftpLogin: (slug, env = loadEnv()) => `deploy-${slug}@${env.baseDomain}`,
+  subdomainHost: (slug, env = loadEnv(), parent = env.baseDomain) => `${slug}.${parent}`,
+  demoHost: (slug, env = loadEnv(), parent = env.baseDomain) => `demo-${slug}.${parent}`,
+  stagingHost: (slug, env = loadEnv(), parent = env.baseDomain) => `stg-${slug}.${parent}`,
+  // "lzhub.niagova.com" -> label "lzhub", root "niagova.com". The saved host is the source of truth on --resume.
+  splitHost: (host) => { const [label, ...rest] = host.split('.'); return { label, rootDomain: rest.join('.') }; },
+  // A client and a demo may share a slug, so their FTP users must differ.
+  ftpUser: (slug, kind = 'client') => (kind === 'demo' ? `deploy-demo-${slug}` : `deploy-${slug}`),
+  ftpLogin: (slug, env = loadEnv(), kind = 'client') => `${naming.ftpUser(slug, kind)}@${env.hostingDomain}`,
   sshRemote: (repo, env = loadEnv()) => `git@${env.githubSshHost}:${env.githubOwner}/${repo}.git`,
   productionUrl: (host) => `https://${host}`,
   releaseTag: (shortSha, date = new Date()) => {
@@ -363,7 +390,7 @@ export function defaultBuildConfig() {
   };
 }
 
-export function buildSiteConfig({ name, slug, template, templateVersion = null, business, platformRef, kind = 'client', legacyDemo = false, domainType = 'subdomain', customDomain, dnsMode, visibility = 'private', ftpAccount = 'dedicated', env = loadEnv() }) {
+export function buildSiteConfig({ name, slug, template, templateVersion = null, business, platformRef, kind = 'client', legacyDemo = false, domainType = 'subdomain', parentDomain, customDomain, dnsMode, visibility = 'private', ftpAccount = 'dedicated', env = loadEnv() }) {
   const cfg = {
     client: { name, slug },
     template: { id: validateTemplateId(template), version: templateVersion || null },
@@ -381,14 +408,14 @@ export function buildSiteConfig({ name, slug, template, templateVersion = null, 
     cfg.hosting.deploy_dir = naming.deployDir(slug);
     cfg.hosting.ftp_account = ftpAccount;
     if (domainType === 'subdomain') {
-      cfg.domain = { type: 'subdomain', primary: naming.subdomainHost(slug, env) };
+      cfg.domain = { type: 'subdomain', primary: naming.subdomainHost(slug, env, parentDomain) };
     } else {
-      cfg.domain = { type: 'custom', primary: customDomain, staging: naming.stagingHost(slug, env), dns_mode: dnsMode || 'external' };
+      cfg.domain = { type: 'custom', primary: customDomain, staging: naming.stagingHost(slug, env, parentDomain), dns_mode: dnsMode || 'external' };
     }
   } else if (kind === 'demo') {
     cfg.hosting.deploy_dir = legacyDemo ? naming.legacyDemoDeployDir(slug) : naming.demoDeployDir(slug);
     cfg.hosting.ftp_account = legacyDemo ? 'shared' : ftpAccount;
-    cfg.domain = { type: 'subdomain', primary: naming.subdomainHost(slug, env) };
+    cfg.domain = { type: 'subdomain', primary: legacyDemo ? naming.subdomainHost(slug, env, parentDomain) : naming.demoHost(slug, env, parentDomain) };
     cfg.github.repo = legacyDemo ? naming.legacyDemoRepoName(slug) : naming.demoRepoName(slug);
   } else {
     cfg.hosting.deploy_dir = 'public_html/';
@@ -453,7 +480,7 @@ export function validateSiteConfig(data, { source = SITE_CONFIG_FILE, repo } = {
     cfg.domain.dns_mode = cfg.domain.dns_mode || 'external';
     validateDnsMode(cfg.domain.dns_mode);
     if (cfg.site.kind === 'client') {
-      if (!cfg.domain.staging) fail('domain.staging is required for custom-domain clients (stg-<slug>.mybizgate.com).');
+      if (!cfg.domain.staging) fail('domain.staging is required for custom-domain clients (stg-<slug>.<parent-domain>).');
       cfg.domain.staging = validateHostname(cfg.domain.staging, { label: 'domain.staging' });
     }
   }
